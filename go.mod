@@ -15,7 +15,7 @@ require (
 	github.com/gobuffalo/logger v1.0.1 // indirect
 	github.com/gobuffalo/packd v0.3.0 // indirect
 	github.com/gobuffalo/packr/v2 v2.7.1 // indirect
-	github.com/gogo/protobuf v1.3.0 // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.3.1 // indirect
 	github.com/hidal-go/hidalgo v0.0.0-20190814174001-42e03f3b5eaa // indirect
 	github.com/inconshreveable/mousetrap v1.0.0 // indirect
@@ -31,8 +31,8 @@ require (
 	github.com/spf13/cobra v0.0.5 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/tylertreat/BoomFilters v0.0.0-20181028192813-611b3dbe80e8 // indirect
-	golang.org/x/crypto v0.0.0-20191002192127-34f69633bfdc // indirect
-	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
+	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9 // indirect
+	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9 // indirect
 	golang.org/x/sys v0.30.0 // indirect
-	golang.org/x/tools v0.0.0-20191010075000-0337d82405ff // indirect
+	golang.org/x/tools v0.0.0-20210106214847-113979e3529a // indirect
 )
