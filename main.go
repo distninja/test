@@ -68,15 +68,11 @@ type NinjaCayleyStore struct {
 
 // Quad predicates for relationships
 const (
-	PredicateRuleUsedBy     = "rule_used_by"
 	PredicateHasInput       = "has_input"
 	PredicateHasOutput      = "has_output"
 	PredicateHasImplicitDep = "has_implicit_dep"
 	PredicateHasOrderDep    = "has_order_dep"
 	PredicateDependsOn      = "depends_on"
-	PredicateProduces       = "produces"
-	PredicateIncluded       = "included"
-	PredicateLinkedWith     = "linked_with"
 )
 
 // NewNinjaCayleyStore creates a new Cayley-based Ninja graph store
@@ -143,7 +139,10 @@ func (ncs *NinjaCayleyStore) GetRule(name string) (*NinjaRule, error) {
 
 // AddBuild adds a build statement to the graph
 func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implicitDeps, orderDeps []string) error {
-	tx := graph.NewTransaction()
+	qw := graph.NewWriter(ncs.store)
+	defer func(qw graph.BatchWriter) {
+		_ = qw.Close()
+	}(qw)
 
 	// Set build metadata
 	build.ID = quad.IRI(fmt.Sprintf("build:%s", build.BuildID))
@@ -151,14 +150,12 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 	build.CreatedAt = time.Now()
 
 	// Write build object
-	buildQuads, err := ncs.schema.WriteAsQuads(nil, build)
+	_, err := ncs.schema.WriteAsQuads(qw, build)
 	if err != nil {
 		return fmt.Errorf("failed to serialize build: %w", err)
 	}
 
-	for _, q := range buildQuads {
-		tx.AddQuad(q)
-	}
+	var quads []quad.Quad
 
 	// Create output targets
 	for _, output := range outputs {
@@ -171,17 +168,13 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 			Build:        build.ID,
 		}
 
-		targetQuads, err := ncs.schema.WriteAsQuads(nil, target)
+		_, err := ncs.schema.WriteAsQuads(qw, target)
 		if err != nil {
 			return fmt.Errorf("failed to serialize target: %w", err)
 		}
 
-		for _, q := range targetQuads {
-			tx.AddQuad(q)
-		}
-
 		// Link build to output
-		tx.AddQuad(quad.Make(build.ID, PredicateHasOutput, quad.IRI(fmt.Sprintf("target:%s", output)), nil))
+		quads = append(quads, quad.Make(build.ID, PredicateHasOutput, quad.IRI(fmt.Sprintf("target:%s", output)), nil))
 	}
 
 	// Create input file nodes and relationships
@@ -193,21 +186,17 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 			FileType: ncs.inferFileType(input),
 		}
 
-		fileQuads, err := ncs.schema.WriteAsQuads(nil, inputFile)
+		_, err := ncs.schema.WriteAsQuads(qw, inputFile)
 		if err != nil {
 			return fmt.Errorf("failed to serialize input file: %w", err)
 		}
 
-		for _, q := range fileQuads {
-			tx.AddQuad(q)
-		}
-
 		// Link build to input
-		tx.AddQuad(quad.Make(build.ID, PredicateHasInput, quad.IRI(fmt.Sprintf("file:%s", input)), nil))
+		quads = append(quads, quad.Make(build.ID, PredicateHasInput, quad.IRI(fmt.Sprintf("file:%s", input)), nil))
 
 		// Create dependencies from outputs to inputs
 		for _, output := range outputs {
-			tx.AddQuad(quad.Make(
+			quads = append(quads, quad.Make(
 				quad.IRI(fmt.Sprintf("target:%s", output)),
 				PredicateDependsOn,
 				quad.IRI(fmt.Sprintf("file:%s", input)),
@@ -225,19 +214,15 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 			FileType: ncs.inferFileType(implicitDep),
 		}
 
-		fileQuads, err := ncs.schema.WriteAsQuads(nil, depFile)
+		_, err := ncs.schema.WriteAsQuads(qw, depFile)
 		if err != nil {
 			return fmt.Errorf("failed to serialize implicit dep: %w", err)
 		}
 
-		for _, q := range fileQuads {
-			tx.AddQuad(q)
-		}
-
-		tx.AddQuad(quad.Make(build.ID, PredicateHasImplicitDep, quad.IRI(fmt.Sprintf("file:%s", implicitDep)), nil))
+		quads = append(quads, quad.Make(build.ID, PredicateHasImplicitDep, quad.IRI(fmt.Sprintf("file:%s", implicitDep)), nil))
 
 		for _, output := range outputs {
-			tx.AddQuad(quad.Make(
+			quads = append(quads, quad.Make(
 				quad.IRI(fmt.Sprintf("target:%s", output)),
 				PredicateDependsOn,
 				quad.IRI(fmt.Sprintf("file:%s", implicitDep)),
@@ -248,11 +233,18 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 
 	// Handle order-only dependencies
 	for _, orderDep := range orderDeps {
-		tx.AddQuad(quad.Make(build.ID, PredicateHasOrderDep, quad.IRI(fmt.Sprintf("file:%s", orderDep)), nil))
+		quads = append(quads, quad.Make(build.ID, PredicateHasOrderDep, quad.IRI(fmt.Sprintf("file:%s", orderDep)), nil))
 	}
 
-	// Apply transaction
-	return ncs.store.ApplyTransaction(tx)
+	// Write all quads at once
+	if len(quads) > 0 {
+		_, err = qw.WriteQuads(quads)
+		if err != nil {
+			return fmt.Errorf("failed to write quads: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // inferFileType infers file type from extension
@@ -413,17 +405,24 @@ func (ncs *NinjaCayleyStore) UpdateTargetStatus(targetPath, status string) error
 
 	targetIRI := quad.IRI(fmt.Sprintf("target:%s", targetPath))
 
-	// Remove old status
-	oldStatusQuads := ncs.store.QuadsAllIterator().Iterate(ncs.ctx).
-		Limit(100) // Reasonable limit for status updates
+	// Remove old status - iterate through quads to find status ones
+	it := ncs.store.QuadsAllIterator()
 
-	for oldStatusQuads.Next(ncs.ctx) {
-		q := oldStatusQuads.Result()
+	defer func(it graph.Iterator) {
+		_ = it.Close()
+	}(it)
+
+	for it.Next(ncs.ctx) {
+		ref := it.Result()
+		q := ncs.store.Quad(ref)
 		if q.Subject == targetIRI && q.Predicate == quad.IRI("status") {
 			tx.RemoveQuad(q)
 		}
 	}
-	oldStatusQuads.Close()
+
+	if err := it.Err(); err != nil {
+		return fmt.Errorf("failed to iterate quads: %w", err)
+	}
 
 	// Add new status
 	tx.AddQuad(quad.Make(targetIRI, quad.IRI("status"), quad.String(status), nil))
@@ -508,32 +507,68 @@ func (ncs *NinjaCayleyStore) GetBuildStats() (map[string]interface{}, error) {
 
 	// Count rules
 	rulesPath := cayley.StartPath(ncs.store).Has(quad.IRI("@type"), quad.IRI("NinjaRule"))
-	ruleCount, err := rulesPath.Count().Limit(1000).All().Next(ncs.ctx)
-	if err != nil {
+	rulesIt, _ := rulesPath.BuildIterator().Optimize()
+
+	defer func(rulesIt graph.Iterator) {
+		_ = rulesIt.Close()
+	}(rulesIt)
+
+	ruleCount := 0
+	for rulesIt.Next(ncs.ctx) {
+		ruleCount++
+	}
+	if err := rulesIt.Err(); err != nil {
 		return nil, fmt.Errorf("failed to count rules: %w", err)
 	}
 	stats["total_rules"] = ruleCount
 
 	// Count builds
 	buildsPath := cayley.StartPath(ncs.store).Has(quad.IRI("@type"), quad.IRI("NinjaBuild"))
-	buildCount, err := buildsPath.Count().Limit(1000).All().Next(ncs.ctx)
-	if err != nil {
+	buildsIt, _ := buildsPath.BuildIterator().Optimize()
+
+	defer func(buildsIt graph.Iterator) {
+		_ = buildsIt.Close()
+	}(buildsIt)
+
+	buildCount := 0
+	for buildsIt.Next(ncs.ctx) {
+		buildCount++
+	}
+	if err := buildsIt.Err(); err != nil {
 		return nil, fmt.Errorf("failed to count builds: %w", err)
 	}
 	stats["total_builds"] = buildCount
 
 	// Count targets
 	targetsPath := cayley.StartPath(ncs.store).Has(quad.IRI("@type"), quad.IRI("NinjaTarget"))
-	targetCount, err := targetsPath.Count().Limit(1000).All().Next(ncs.ctx)
-	if err != nil {
+	targetsIt, _ := targetsPath.BuildIterator().Optimize()
+
+	defer func(targetsIt graph.Iterator) {
+		_ = targetsIt.Close()
+	}(targetsIt)
+
+	targetCount := 0
+	for targetsIt.Next(ncs.ctx) {
+		targetCount++
+	}
+	if err := targetsIt.Err(); err != nil {
 		return nil, fmt.Errorf("failed to count targets: %w", err)
 	}
 	stats["total_targets"] = targetCount
 
 	// Count files
 	filesPath := cayley.StartPath(ncs.store).Has(quad.IRI("@type"), quad.IRI("NinjaFile"))
-	fileCount, err := filesPath.Count().Limit(1000).All().Next(ncs.ctx)
-	if err != nil {
+	filesIt, _ := filesPath.BuildIterator().Optimize()
+
+	defer func(filesIt graph.Iterator) {
+		_ = filesIt.Close()
+	}(filesIt)
+
+	fileCount := 0
+	for filesIt.Next(ncs.ctx) {
+		fileCount++
+	}
+	if err := filesIt.Err(); err != nil {
 		return nil, fmt.Errorf("failed to count files: %w", err)
 	}
 	stats["total_files"] = fileCount
