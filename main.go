@@ -648,12 +648,14 @@ func main() {
 	err = ncs.AddRule(cxxRule)
 	if err != nil {
 		fmt.Println("Failed to add cxx rule:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
 	err = ncs.AddRule(linkRule)
 	if err != nil {
 		fmt.Println("Failed to add link rule:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
@@ -672,6 +674,7 @@ func main() {
 	)
 	if err != nil {
 		fmt.Println("Failed to add main build:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
@@ -689,6 +692,7 @@ func main() {
 	)
 	if err != nil {
 		fmt.Println("Failed to add util build:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
@@ -706,6 +710,7 @@ func main() {
 	)
 	if err != nil {
 		fmt.Println("Failed to add app build:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
@@ -716,6 +721,7 @@ func main() {
 	stats, err := ncs.GetBuildStats()
 	if err != nil {
 		fmt.Println("Failed to get build stats:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
@@ -728,6 +734,7 @@ func main() {
 	buildOrder, err := ncs.GetBuildOrder()
 	if err != nil {
 		fmt.Println("Failed to get build order:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
@@ -740,6 +747,7 @@ func main() {
 	deps, err := ncs.GetBuildDependencies("build/app")
 	if err != nil {
 		fmt.Println("Failed to get dependencies:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
@@ -752,6 +760,7 @@ func main() {
 	reverseDeps, err := ncs.GetReverseDependencies("src/common.h")
 	if err != nil {
 		fmt.Println("Failed to get reverse dependencies:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
@@ -764,6 +773,7 @@ func main() {
 	cycles, err := ncs.FindCycles()
 	if err != nil {
 		fmt.Println("Failed to find cycles:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
@@ -780,12 +790,14 @@ func main() {
 	err = ncs.UpdateTargetStatus("build/main.o", "building")
 	if err != nil {
 		fmt.Println("Failed to update target status:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
 	target, err := ncs.GetTarget("build/main.o")
 	if err != nil {
 		fmt.Println("Failed to get target:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
@@ -795,6 +807,7 @@ func main() {
 	cxxTargets, err := ncs.GetTargetsByRule("cxx")
 	if err != nil {
 		fmt.Println("Failed to get targets by rule:", err.Error())
+		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
