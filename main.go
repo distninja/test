@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -617,7 +616,8 @@ func main() {
 	dbPath := "./ninja_db/cayley.db"
 	ncs, err := NewNinjaCayleyStore(dbPath)
 	if err != nil {
-		log.Fatal("Failed to create Ninja Cayley store:", err)
+		fmt.Println("Failed to create Ninja Cayley store:", err.Error())
+		os.Exit(1)
 	}
 
 	fmt.Printf("Database created at: %s\n", dbPath)
@@ -647,12 +647,14 @@ func main() {
 
 	err = ncs.AddRule(cxxRule)
 	if err != nil {
-		log.Fatal("Failed to add cxx rule:", err)
+		fmt.Println("Failed to add cxx rule:", err.Error())
+		os.Exit(1)
 	}
 
 	err = ncs.AddRule(linkRule)
 	if err != nil {
-		log.Fatal("Failed to add link rule:", err)
+		fmt.Println("Failed to add link rule:", err.Error())
+		os.Exit(1)
 	}
 
 	// Add build statements
@@ -669,7 +671,8 @@ func main() {
 		[]string{},                             // order deps
 	)
 	if err != nil {
-		log.Fatal("Failed to add main build:", err)
+		fmt.Println("Failed to add main build:", err.Error())
+		os.Exit(1)
 	}
 
 	utilBuild := &NinjaBuild{
@@ -685,7 +688,8 @@ func main() {
 		[]string{},
 	)
 	if err != nil {
-		log.Fatal("Failed to add util build:", err)
+		fmt.Println("Failed to add util build:", err.Error())
+		os.Exit(1)
 	}
 
 	appBuild := &NinjaBuild{
@@ -701,7 +705,8 @@ func main() {
 		[]string{},
 	)
 	if err != nil {
-		log.Fatal("Failed to add app build:", err)
+		fmt.Println("Failed to add app build:", err.Error())
+		os.Exit(1)
 	}
 
 	// Query the build graph
@@ -710,7 +715,8 @@ func main() {
 	// Get build statistics
 	stats, err := ncs.GetBuildStats()
 	if err != nil {
-		log.Fatal("Failed to get build stats:", err)
+		fmt.Println("Failed to get build stats:", err.Error())
+		os.Exit(1)
 	}
 
 	fmt.Println("Build Statistics:")
@@ -721,7 +727,8 @@ func main() {
 	// Get build order
 	buildOrder, err := ncs.GetBuildOrder()
 	if err != nil {
-		log.Fatal("Failed to get build order:", err)
+		fmt.Println("Failed to get build order:", err.Error())
+		os.Exit(1)
 	}
 
 	fmt.Println("\nBuild Order:")
@@ -732,7 +739,8 @@ func main() {
 	// Get dependencies
 	deps, err := ncs.GetBuildDependencies("build/app")
 	if err != nil {
-		log.Fatal("Failed to get dependencies:", err)
+		fmt.Println("Failed to get dependencies:", err.Error())
+		os.Exit(1)
 	}
 
 	fmt.Println("\nDependencies for 'build/app':")
@@ -743,7 +751,8 @@ func main() {
 	// Get reverse dependencies
 	reverseDeps, err := ncs.GetReverseDependencies("src/common.h")
 	if err != nil {
-		log.Fatal("Failed to get reverse dependencies:", err)
+		fmt.Println("Failed to get reverse dependencies:", err.Error())
+		os.Exit(1)
 	}
 
 	fmt.Println("\nTargets depending on 'src/common.h':")
@@ -754,7 +763,8 @@ func main() {
 	// Check for cycles
 	cycles, err := ncs.FindCycles()
 	if err != nil {
-		log.Fatal("Failed to find cycles:", err)
+		fmt.Println("Failed to find cycles:", err.Error())
+		os.Exit(1)
 	}
 
 	if len(cycles) > 0 {
@@ -769,12 +779,14 @@ func main() {
 	// Update target status
 	err = ncs.UpdateTargetStatus("build/main.o", "building")
 	if err != nil {
-		log.Fatal("Failed to update target status:", err)
+		fmt.Println("Failed to update target status:", err.Error())
+		os.Exit(1)
 	}
 
 	target, err := ncs.GetTarget("build/main.o")
 	if err != nil {
-		log.Fatal("Failed to get target:", err)
+		fmt.Println("Failed to get target:", err.Error())
+		os.Exit(1)
 	}
 
 	fmt.Printf("\nTarget 'build/main.o' status: %s\n", target.Status)
@@ -782,7 +794,8 @@ func main() {
 	// Get targets by rule
 	cxxTargets, err := ncs.GetTargetsByRule("cxx")
 	if err != nil {
-		log.Fatal("Failed to get targets by rule:", err)
+		fmt.Println("Failed to get targets by rule:", err.Error())
+		os.Exit(1)
 	}
 
 	fmt.Println("\nTargets built with 'cxx' rule:")
