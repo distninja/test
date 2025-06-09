@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,6 +66,7 @@ type NinjaCayleyStore struct {
 	store  *cayley.Handle
 	schema *schema.Config
 	ctx    context.Context
+	dbPath string
 }
 
 // Quad predicates for relationships
@@ -77,10 +80,33 @@ const (
 
 // NewNinjaCayleyStore creates a new Cayley-based Ninja graph store
 func NewNinjaCayleyStore(dbPath string) (*NinjaCayleyStore, error) {
-	// Initialize Cayley with BoltDB backend
-	store, err := cayley.NewGraph("bolt", dbPath, nil)
+	// Ensure the directory exists
+	dbDir := filepath.Dir(dbPath)
+	if dbDir == "." {
+		// If no directory specified, create a subdirectory
+		dbDir = filepath.Join(".", "ninja_db")
+		dbPath = filepath.Join(dbDir, "cayley.db")
+	}
+
+	err := os.MkdirAll(dbDir, 0755)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Cayley store: %w", err)
+		return nil, fmt.Errorf("failed to create database directory %s: %w", dbDir, err)
+	}
+
+	// Check if database exists, if not initialize it
+	var store *cayley.Handle
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		// Initialize new database
+		err = graph.InitQuadStore("bolt", dbPath, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize Cayley store at %s: %w", dbPath, err)
+		}
+	}
+
+	// Open the database
+	store, err = cayley.NewGraph("bolt", dbPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open Cayley store at %s: %w", dbPath, err)
 	}
 
 	// Register types
@@ -98,6 +124,7 @@ func NewNinjaCayleyStore(dbPath string) (*NinjaCayleyStore, error) {
 		store:  store,
 		schema: schemaConfig,
 		ctx:    ctx,
+		dbPath: dbPath,
 	}, nil
 }
 
@@ -576,16 +603,27 @@ func (ncs *NinjaCayleyStore) GetBuildStats() (map[string]interface{}, error) {
 	return stats, nil
 }
 
+func (ncs *NinjaCayleyStore) CleanupDatabase() error {
+	if err := ncs.Close(); err != nil {
+		return err
+	}
+
+	return os.RemoveAll(filepath.Dir(ncs.dbPath))
+}
+
 // Example usage
 func main() {
 	// Create Ninja Cayley store
-	ncs, err := NewNinjaCayleyStore("ninja_cayley.db")
+	dbPath := "./ninja_db/cayley.db"
+	ncs, err := NewNinjaCayleyStore(dbPath)
 	if err != nil {
 		log.Fatal("Failed to create Ninja Cayley store:", err)
 	}
 
+	fmt.Printf("Database created at: %s\n", dbPath)
+
 	defer func(ncs *NinjaCayleyStore) {
-		_ = ncs.Close()
+		_ = ncs.CleanupDatabase()
 	}(ncs)
 
 	// Add build rules
@@ -667,7 +705,7 @@ func main() {
 	}
 
 	// Query the build graph
-	fmt.Println("=== Ninja Build Graph with Cayley ===")
+	fmt.Println("\nNinja Build Graph with Cayley")
 
 	// Get build statistics
 	stats, err := ncs.GetBuildStats()
@@ -751,4 +789,6 @@ func main() {
 	for _, target := range cxxTargets {
 		fmt.Printf("  - %s (status: %s)\n", target.Path, target.Status)
 	}
+
+	fmt.Println("\nDatabase operations completed successfully!")
 }
