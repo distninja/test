@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,47 +18,98 @@ import (
 
 // NinjaRule represents a build rule in Ninja
 type NinjaRule struct {
-	ID          quad.IRI          `json:"@id" quad:"@id"`
-	Type        quad.IRI          `json:"@type" quad:"@type"`
-	Name        string            `json:"name" quad:"name"`
-	Command     string            `json:"command" quad:"command"`
-	Description string            `json:"description,omitempty" quad:"description"`
-	Generator   bool              `json:"generator,omitempty" quad:"generator"`
-	Restat      bool              `json:"restat,omitempty" quad:"restat"`
-	Variables   map[string]string `json:"variables,omitempty" quad:"variables"`
-	CreatedAt   time.Time         `json:"created_at" quad:"created_at"`
+	ID          quad.IRI `json:"@id" quad:"@id"`
+	Type        quad.IRI `json:"@type" quad:"@type"`
+	Name        string   `json:"name" quad:"name"`
+	Command     string   `json:"command" quad:"command"`
+	Description string   `json:"description,omitempty" quad:"description"`
+	Variables   string   `json:"variables,omitempty" quad:"variables"`
+}
+
+// SetVariables converts map to JSON string
+func (nr *NinjaRule) SetVariables(variables map[string]string) error {
+	if len(variables) == 0 {
+		nr.Variables = "{}" // Set to empty JSON object instead of empty string
+		return nil
+	}
+
+	jsonBytes, err := json.Marshal(variables)
+	if err != nil {
+		return err
+	}
+
+	nr.Variables = string(jsonBytes)
+
+	return nil
+}
+
+// GetVariables converts JSON string back to map
+func (nr *NinjaRule) GetVariables() (map[string]string, error) {
+	if nr.Variables == "" || nr.Variables == "{}" {
+		return make(map[string]string), nil
+	}
+
+	var variables map[string]string
+	err := json.Unmarshal([]byte(nr.Variables), &variables)
+
+	return variables, err
 }
 
 // NinjaBuild represents a build statement
 type NinjaBuild struct {
-	ID        quad.IRI          `json:"@id" quad:"@id"`
-	Type      quad.IRI          `json:"@type" quad:"@type"`
-	BuildID   string            `json:"build_id" quad:"build_id"`
-	Rule      quad.IRI          `json:"rule" quad:"rule"`
-	Variables map[string]string `json:"variables,omitempty" quad:"variables"`
-	Pool      string            `json:"pool,omitempty" quad:"pool"`
-	CreatedAt time.Time         `json:"created_at" quad:"created_at"`
+	ID        quad.IRI `json:"@id" quad:"@id"`
+	Type      quad.IRI `json:"@type" quad:"@type"`
+	BuildID   string   `json:"build_id" quad:"build_id"`
+	Rule      quad.IRI `json:"rule" quad:"rule"`
+	Variables string   `json:"variables,omitempty" quad:"variables"`
+	Pool      string   `json:"pool,omitempty" quad:"pool"`
+}
+
+// SetVariables converts map to JSON string
+func (nb *NinjaBuild) SetVariables(variables map[string]string) error {
+	if len(variables) == 0 {
+		nb.Variables = "{}" // Set to empty JSON object instead of empty string
+		return nil
+	}
+
+	jsonBytes, err := json.Marshal(variables)
+	if err != nil {
+		return err
+	}
+
+	nb.Variables = string(jsonBytes)
+
+	return nil
+}
+
+// GetVariables converts JSON string back to map
+func (nb *NinjaBuild) GetVariables() (map[string]string, error) {
+	if nb.Variables == "" || nb.Variables == "{}" {
+		return make(map[string]string), nil
+	}
+
+	var variables map[string]string
+	err := json.Unmarshal([]byte(nb.Variables), &variables)
+
+	return variables, err
 }
 
 // NinjaTarget represents a build target
 type NinjaTarget struct {
-	ID           quad.IRI  `json:"@id" quad:"@id"`
-	Type         quad.IRI  `json:"@type" quad:"@type"`
-	Path         string    `json:"path" quad:"path"`
-	Status       string    `json:"status" quad:"status"`
-	Hash         string    `json:"hash,omitempty" quad:"hash"`
-	LastModified time.Time `json:"last_modified" quad:"last_modified"`
-	Build        quad.IRI  `json:"build" quad:"build"`
+	ID     quad.IRI `json:"@id" quad:"@id"`
+	Type   quad.IRI `json:"@type" quad:"@type"`
+	Path   string   `json:"path" quad:"path"`
+	Status string   `json:"status" quad:"status"`
+	Hash   string   `json:"hash,omitempty" quad:"hash"`
+	Build  quad.IRI `json:"build" quad:"build"`
 }
 
 // NinjaFile represents source files and dependencies
 type NinjaFile struct {
-	ID           quad.IRI  `json:"@id" quad:"@id"`
-	Type         quad.IRI  `json:"@type" quad:"@type"`
-	Path         string    `json:"path" quad:"path"`
-	FileType     string    `json:"file_type" quad:"file_type"` // "source", "header", "object", etc.
-	LastModified time.Time `json:"last_modified" quad:"last_modified"`
-	Size         int64     `json:"size" quad:"size"`
+	ID       quad.IRI `json:"@id" quad:"@id"`
+	Type     quad.IRI `json:"@type" quad:"@type"`
+	Path     string   `json:"path" quad:"path"`
+	FileType string   `json:"file_type" quad:"file_type"` // "source", "header", "object", etc.
 }
 
 // NinjaCayleyStore implements Ninja build graph using Cayley
@@ -136,7 +188,6 @@ func (ncs *NinjaCayleyStore) Close() error {
 func (ncs *NinjaCayleyStore) AddRule(rule *NinjaRule) error {
 	rule.ID = quad.IRI(fmt.Sprintf("rule:%s", rule.Name))
 	rule.Type = "NinjaRule"
-	rule.CreatedAt = time.Now()
 
 	qw := graph.NewWriter(ncs.store)
 
@@ -173,7 +224,6 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 	// Set build metadata
 	build.ID = quad.IRI(fmt.Sprintf("build:%s", build.BuildID))
 	build.Type = "NinjaBuild"
-	build.CreatedAt = time.Now()
 
 	// Write build object
 	_, err := ncs.schema.WriteAsQuads(qw, build)
@@ -186,12 +236,12 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 	// Create output targets
 	for _, output := range outputs {
 		target := &NinjaTarget{
-			ID:           quad.IRI(fmt.Sprintf("target:%s", output)),
-			Type:         quad.IRI("NinjaTarget"),
-			Path:         output,
-			Status:       "clean",
-			LastModified: time.Now(),
-			Build:        build.ID,
+			ID:     quad.IRI(fmt.Sprintf("target:%s", output)),
+			Type:   quad.IRI("NinjaTarget"),
+			Path:   output,
+			Status: "clean",
+			Hash:   "none",
+			Build:  build.ID,
 		}
 
 		_, err := ncs.schema.WriteAsQuads(qw, target)
@@ -631,18 +681,28 @@ func main() {
 		Name:        "cxx",
 		Command:     "g++ -MMD -MF $out.d -c $in -o $out $cflags",
 		Description: "Compiling C++ object $out",
-		Variables: map[string]string{
-			"cflags": "-Wall -g -std=c++17",
-		},
+	}
+
+	if err := cxxRule.SetVariables(map[string]string{
+		"cflags": "-Wall -g -std=c++17",
+	}); err != nil {
+		fmt.Println("Failed to set cxx rule variables:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
 	}
 
 	linkRule := &NinjaRule{
 		Name:        "link",
 		Command:     "g++ $in -o $out $ldflags",
 		Description: "Linking executable $out",
-		Variables: map[string]string{
-			"ldflags": "-pthread -lm",
-		},
+	}
+
+	if err := linkRule.SetVariables(map[string]string{
+		"ldflags": "-pthread -lm",
+	}); err != nil {
+		fmt.Println("Failed to set link rule variables:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
 	}
 
 	err = ncs.AddRule(cxxRule)
@@ -663,6 +723,14 @@ func main() {
 	mainBuild := &NinjaBuild{
 		BuildID: "main_obj",
 		Rule:    quad.IRI("rule:cxx"),
+		Pool:    "highmem_pool",
+	}
+
+	// Initialize variables to empty map
+	if err := mainBuild.SetVariables(map[string]string{}); err != nil {
+		fmt.Println("Failed to set main build variables:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
 	}
 
 	err = ncs.AddBuild(
@@ -681,6 +749,14 @@ func main() {
 	utilBuild := &NinjaBuild{
 		BuildID: "util_obj",
 		Rule:    quad.IRI("rule:cxx"),
+		Pool:    "highmem_pool",
+	}
+
+	// Initialize variables to empty map
+	if err := utilBuild.SetVariables(map[string]string{}); err != nil {
+		fmt.Println("Failed to set util build variables:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
 	}
 
 	err = ncs.AddBuild(
@@ -699,6 +775,14 @@ func main() {
 	appBuild := &NinjaBuild{
 		BuildID: "app_exe",
 		Rule:    quad.IRI("rule:link"),
+		Pool:    "highmem_pool",
+	}
+
+	// Initialize variables to empty map
+	if err := appBuild.SetVariables(map[string]string{}); err != nil {
+		fmt.Println("Failed to set app build variables:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
 	}
 
 	err = ncs.AddBuild(
