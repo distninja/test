@@ -359,13 +359,18 @@ func (ncs *NinjaCayleyStore) GetBuildDependencies(targetPath string) ([]*NinjaFi
 	p := cayley.StartPath(ncs.store, quad.IRI(fmt.Sprintf("target:%s", targetPath))).
 		Out(quad.IRI(PredicateDependsOn))
 
-	var dependencies []*NinjaFile
+	var dependencies []NinjaFile
 	err := ncs.schema.LoadPathTo(ncs.ctx, ncs.store, &dependencies, p)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dependencies for %s: %w", targetPath, err)
 	}
 
-	return dependencies, nil
+	var result []*NinjaFile
+	for i := range dependencies {
+		result = append(result, &dependencies[i])
+	}
+
+	return result, nil
 }
 
 // GetReverseDependencies returns all targets that depend on a file
@@ -374,13 +379,18 @@ func (ncs *NinjaCayleyStore) GetReverseDependencies(filePath string) ([]*NinjaTa
 	p := cayley.StartPath(ncs.store, quad.IRI(fmt.Sprintf("file:%s", filePath))).
 		In(quad.IRI(PredicateDependsOn))
 
-	var dependents []*NinjaTarget
+	var dependents []NinjaTarget
 	err := ncs.schema.LoadPathTo(ncs.ctx, ncs.store, &dependents, p)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get reverse dependencies for %s: %w", filePath, err)
 	}
 
-	return dependents, nil
+	var result []*NinjaTarget
+	for i := range dependents {
+		result = append(result, &dependents[i])
+	}
+
+	return result, nil
 }
 
 // GetBuildOrder returns targets in topological order
@@ -449,13 +459,18 @@ func (ncs *NinjaCayleyStore) GetBuildOrder() ([]string, error) {
 func (ncs *NinjaCayleyStore) GetAllTargets() ([]*NinjaTarget, error) {
 	p := cayley.StartPath(ncs.store).Has(quad.IRI("@type"), quad.IRI("NinjaTarget"))
 
-	var targets []*NinjaTarget
+	var targets []NinjaTarget
 	err := ncs.schema.LoadPathTo(ncs.ctx, ncs.store, &targets, p)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all targets: %w", err)
 	}
 
-	return targets, nil
+	var result []*NinjaTarget
+	for i := range targets {
+		result = append(result, &targets[i])
+	}
+
+	return result, nil
 }
 
 // GetTargetsByRule returns all targets built by a specific rule
@@ -466,13 +481,18 @@ func (ncs *NinjaCayleyStore) GetTargetsByRule(ruleName string) ([]*NinjaTarget, 
 	p := cayley.StartPath(ncs.store).Has(quad.IRI("rule"), ruleIRI).
 		Out(quad.IRI(PredicateHasOutput))
 
-	var targets []*NinjaTarget
+	var targets []NinjaTarget
 	err := ncs.schema.LoadPathTo(ncs.ctx, ncs.store, &targets, p)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get targets by rule %s: %w", ruleName, err)
 	}
 
-	return targets, nil
+	var result []*NinjaTarget
+	for i := range targets {
+		result = append(result, &targets[i])
+	}
+
+	return result, nil
 }
 
 // UpdateTargetStatus updates the status of a target
