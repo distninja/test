@@ -133,12 +133,6 @@ const (
 func NewNinjaCayleyStore(dbPath string) (*NinjaCayleyStore, error) {
 	// Ensure the directory exists
 	dbDir := filepath.Dir(dbPath)
-	if dbDir == "." {
-		// If no directory specified, create a subdirectory
-		dbDir = filepath.Join(".", "ninja_db")
-		dbPath = filepath.Join(dbDir, "cayley.db")
-	}
-
 	err := os.MkdirAll(dbDir, 0755)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create database directory %s: %w", dbDir, err)
@@ -185,27 +179,27 @@ func (ncs *NinjaCayleyStore) Close() error {
 }
 
 // AddRule adds a build rule to the graph
-func (ncs *NinjaCayleyStore) AddRule(rule *NinjaRule) error {
-	rule.ID = quad.IRI(fmt.Sprintf("rule:%s", rule.Name))
-	rule.Type = "NinjaRule"
-
+func (ncs *NinjaCayleyStore) AddRule(rule *NinjaRule) (quad.Value, error) {
 	qw := graph.NewWriter(ncs.store)
-
 	defer func(qw graph.BatchWriter) {
 		_ = qw.Close()
 	}(qw)
 
-	_, err := ncs.schema.WriteAsQuads(qw, rule)
-	if err != nil {
-		return fmt.Errorf("failed to write rule: %w", err)
+	rule.ID = quad.IRI(fmt.Sprintf("rule:%s", rule.Name))
+	rule.Type = "NinjaRule"
+
+	id, err := ncs.schema.WriteAsQuads(qw, rule)
+	if err != nil || id != rule.ID {
+		return nil, fmt.Errorf("failed to write rule: %w", err)
 	}
 
-	return nil
+	return id, nil
 }
 
 // GetRule retrieves a rule by name
 func (ncs *NinjaCayleyStore) GetRule(name string) (*NinjaRule, error) {
 	var rule NinjaRule
+
 	err := ncs.schema.LoadTo(ncs.ctx, ncs.store, &rule, quad.IRI(fmt.Sprintf("rule:%s", name)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to load rule %s: %w", name, err)
@@ -226,9 +220,9 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 	build.Type = "NinjaBuild"
 
 	// Write build object
-	_, err := ncs.schema.WriteAsQuads(qw, build)
-	if err != nil {
-		return fmt.Errorf("failed to serialize build: %w", err)
+	id, err := ncs.schema.WriteAsQuads(qw, build)
+	if err != nil || id != build.ID {
+		return fmt.Errorf("failed to write build: %w", err)
 	}
 
 	var quads []quad.Quad
@@ -244,9 +238,9 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 			Build:  build.ID,
 		}
 
-		_, err := ncs.schema.WriteAsQuads(qw, target)
-		if err != nil {
-			return fmt.Errorf("failed to serialize target: %w", err)
+		id, err := ncs.schema.WriteAsQuads(qw, target)
+		if err != nil || id != target.ID {
+			return fmt.Errorf("failed to write target: %w", err)
 		}
 
 		// Link build to output
@@ -262,9 +256,9 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 			FileType: ncs.inferFileType(input),
 		}
 
-		_, err := ncs.schema.WriteAsQuads(qw, inputFile)
-		if err != nil {
-			return fmt.Errorf("failed to serialize input file: %w", err)
+		id, err := ncs.schema.WriteAsQuads(qw, inputFile)
+		if err != nil || id != inputFile.ID {
+			return fmt.Errorf("failed to write input file: %w", err)
 		}
 
 		// Link build to input
@@ -290,9 +284,9 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 			FileType: ncs.inferFileType(implicitDep),
 		}
 
-		_, err := ncs.schema.WriteAsQuads(qw, depFile)
-		if err != nil {
-			return fmt.Errorf("failed to serialize implicit dep: %w", err)
+		id, err := ncs.schema.WriteAsQuads(qw, depFile)
+		if err != nil || id != depFile.ID {
+			return fmt.Errorf("failed to write implicit dep: %w", err)
 		}
 
 		quads = append(quads, quad.Make(build.ID, PredicateHasImplicitDep, quad.IRI(fmt.Sprintf("file:%s", implicitDep)), nil))
@@ -314,8 +308,8 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 
 	// Write all quads at once
 	if len(quads) > 0 {
-		_, err = qw.WriteQuads(quads)
-		if err != nil {
+		count, err := qw.WriteQuads(quads)
+		if err != nil || count != len(quads) {
 			return fmt.Errorf("failed to write quads: %w", err)
 		}
 	}
@@ -323,23 +317,16 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 	return nil
 }
 
-// inferFileType infers file type from extension
-func (ncs *NinjaCayleyStore) inferFileType(path string) string {
-	ext := strings.ToLower(path[strings.LastIndex(path, ".")+1:])
-	switch ext {
-	case "cpp", "cc", "cxx", "c":
-		return "source"
-	case "h", "hpp", "hxx":
-		return "header"
-	case "o", "obj":
-		return "object"
-	case "a", "lib":
-		return "library"
-	case "exe", "":
-		return "executable"
-	default:
-		return "unknown"
+// GetBuild retrieves a build by name
+func (ncs *NinjaCayleyStore) GetBuild(id string) (*NinjaBuild, error) {
+	var build NinjaBuild
+
+	err := ncs.schema.LoadTo(ncs.ctx, ncs.store, &build, quad.IRI(fmt.Sprintf("build:%s", id)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to load build %s: %w", id, err)
 	}
+
+	return &build, nil
 }
 
 // GetTarget retrieves a target by path
@@ -680,6 +667,25 @@ func (ncs *NinjaCayleyStore) CleanupDatabase() error {
 	return os.RemoveAll(filepath.Dir(ncs.dbPath))
 }
 
+// inferFileType infers file type from extension
+func (ncs *NinjaCayleyStore) inferFileType(path string) string {
+	ext := strings.ToLower(path[strings.LastIndex(path, ".")+1:])
+	switch ext {
+	case "cpp", "cc", "cxx", "c":
+		return "source"
+	case "h", "hpp", "hxx":
+		return "header"
+	case "o", "obj":
+		return "object"
+	case "a", "lib":
+		return "library"
+	case "exe", "":
+		return "executable"
+	default:
+		return "unknown"
+	}
+}
+
 // Example usage
 func main() {
 	// Create Ninja Cayley store
@@ -711,12 +717,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = ncs.AddRule(cxxRule)
-	if err != nil {
+	if _, err := ncs.AddRule(cxxRule); err != nil {
 		fmt.Println("Failed to add cxx rule:", err.Error())
 		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
+
+	rule, err := ncs.GetRule(cxxRule.Name)
+	if err != nil {
+		fmt.Println("Failed to get cxx rule:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+	fmt.Printf("\nloaded rule: %+v\n", rule)
 
 	linkRule := &NinjaRule{
 		Name:        "link",
@@ -732,12 +745,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = ncs.AddRule(linkRule)
-	if err != nil {
+	if _, err = ncs.AddRule(linkRule); err != nil {
 		fmt.Println("Failed to add link rule:", err.Error())
 		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
+
+	rule, err = ncs.GetRule(linkRule.Name)
+	if err != nil {
+		fmt.Println("Failed to get link rule:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+	fmt.Printf("\nloaded rule: %+v\n", rule)
 
 	// Add build statements
 	mainBuild := &NinjaBuild{
@@ -766,6 +786,34 @@ func main() {
 		os.Exit(1)
 	}
 
+	build, err := ncs.GetBuild(mainBuild.BuildID)
+	if err != nil {
+		fmt.Println("Failed to get main build:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+	fmt.Printf("\nloaded build: %+v\n", build)
+
+	target, err := ncs.GetTarget("build/main.o")
+	if err != nil {
+		fmt.Println("Failed to get main target:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+	fmt.Printf("\nloaded target: %+v\n", target)
+
+	deps, err := ncs.GetBuildDependencies("build/main.o")
+	if err != nil {
+		fmt.Println("Failed to get main dependencies:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+
+	fmt.Println("\nloaded dependencies: ")
+	for _, dep := range deps {
+		fmt.Printf("%+v\n", dep)
+	}
+
 	utilBuild := &NinjaBuild{
 		BuildID: "util_obj",
 		Rule:    quad.IRI("rule:cxx"),
@@ -792,6 +840,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	build, err = ncs.GetBuild(utilBuild.BuildID)
+	if err != nil {
+		fmt.Println("Failed to get util build:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+	fmt.Printf("\nloaded build: %+v\n", build)
+
 	appBuild := &NinjaBuild{
 		BuildID: "app_exe",
 		Rule:    quad.IRI("rule:link"),
@@ -816,6 +872,26 @@ func main() {
 		fmt.Println("Failed to add app build:", err.Error())
 		_ = ncs.CleanupDatabase()
 		os.Exit(1)
+	}
+
+	build, err = ncs.GetBuild(appBuild.BuildID)
+	if err != nil {
+		fmt.Println("Failed to get app build:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+	fmt.Printf("\nloaded build: %+v\n", build)
+
+	deps, err = ncs.GetBuildDependencies("build/app")
+	if err != nil {
+		fmt.Println("Failed to get app dependencies:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+
+	fmt.Println("\nloaded dependencies: ")
+	for _, dep := range deps {
+		fmt.Printf("%+v\n", dep)
 	}
 
 	// Query the build graph
@@ -845,19 +921,6 @@ func main() {
 	fmt.Println("\nBuild Order:")
 	for i, target := range buildOrder {
 		fmt.Printf("  %d. %s\n", i+1, target)
-	}
-
-	// Get dependencies
-	deps, err := ncs.GetBuildDependencies("build/app")
-	if err != nil {
-		fmt.Println("Failed to get dependencies:", err.Error())
-		_ = ncs.CleanupDatabase()
-		os.Exit(1)
-	}
-
-	fmt.Println("\nDependencies for 'build/app':")
-	for _, dep := range deps {
-		fmt.Printf("  - %s (%s)\n", dep.Path, dep.FileType)
 	}
 
 	// Get reverse dependencies
@@ -897,15 +960,6 @@ func main() {
 		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
-
-	target, err := ncs.GetTarget("build/main.o")
-	if err != nil {
-		fmt.Println("Failed to get target:", err.Error())
-		_ = ncs.CleanupDatabase()
-		os.Exit(1)
-	}
-
-	fmt.Printf("\nTarget 'build/main.o' status: %s\n", target.Status)
 
 	// Get targets by rule
 	cxxTargets, err := ncs.GetTargetsByRule("cxx")
