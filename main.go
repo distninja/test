@@ -711,6 +711,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	err = ncs.AddRule(cxxRule)
+	if err != nil {
+		fmt.Println("Failed to add cxx rule:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+
 	linkRule := &NinjaRule{
 		Name:        "link",
 		Command:     "g++ $in -o $out $ldflags",
@@ -721,13 +728,6 @@ func main() {
 		"ldflags": "-pthread -lm",
 	}); err != nil {
 		fmt.Println("Failed to set link rule variables:", err.Error())
-		_ = ncs.CleanupDatabase()
-		os.Exit(1)
-	}
-
-	err = ncs.AddRule(cxxRule)
-	if err != nil {
-		fmt.Println("Failed to add cxx rule:", err.Error())
 		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
@@ -829,7 +829,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Build Statistics:")
+	fmt.Println("\nBuild Statistics:")
 	for key, value := range stats {
 		fmt.Printf("  %s: %v\n", key, value)
 	}
