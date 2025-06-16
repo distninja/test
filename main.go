@@ -792,7 +792,7 @@ func (ncs *NinjaCayleyStore) DebugQuads() error {
 func (ncs *NinjaCayleyStore) DebugDependencyGraph(filePath string) {
 	fileIRI := quad.IRI(fmt.Sprintf("file:%s", filePath))
 
-	fmt.Printf("Debugging dependency graph for %s\n", filePath)
+	fmt.Printf("\nDebugging dependency graph for %s\n", filePath)
 
 	// Try different traversal directions
 	fmt.Println("\nTrying In() traversal")
