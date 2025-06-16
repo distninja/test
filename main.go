@@ -572,24 +572,59 @@ func (ncs *NinjaCayleyStore) GetBuildOrder() ([]string, error) {
 
 // GetTargetsByRule returns all targets built by a specific rule
 func (ncs *NinjaCayleyStore) GetTargetsByRule(ruleName string) ([]*NinjaTarget, error) {
-	// Find builds using this rule, then find their outputs
 	ruleIRI := quad.IRI(fmt.Sprintf("rule:%s", ruleName))
+	var targets []*NinjaTarget
 
-	p := cayley.StartPath(ncs.store).Has(quad.IRI("rule"), ruleIRI).
-		Out(quad.IRI(PredicateHasOutput))
+	// Find all builds that use this rule
+	it := ncs.store.QuadsAllIterator()
+	defer func(it graph.Iterator) {
+		_ = it.Close()
+	}(it)
 
-	var targets []NinjaTarget
-	err := ncs.schema.LoadPathTo(ncs.ctx, ncs.store, &targets, p)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get targets by rule %s: %w", ruleName, err)
+	var buildIRIs []quad.Value
+
+	for it.Next(ncs.ctx) {
+		q := ncs.store.Quad(it.Result())
+
+		// Look for builds that reference this rule
+		if q.Predicate.String() == `<rule>` && q.Object == ruleIRI {
+			buildIRIs = append(buildIRIs, q.Subject)
+		}
 	}
 
-	var result []*NinjaTarget
-	for i := range targets {
-		result = append(result, &targets[i])
+	if err := it.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate quads: %w", err)
 	}
 
-	return result, nil
+	// For each build, find its output targets
+	for _, buildIRI := range buildIRIs {
+		// Find targets that are outputs of this build
+		it := ncs.store.QuadsAllIterator()
+		defer func(it graph.Iterator) {
+			_ = it.Close()
+		}(it)
+
+		for it.Next(ncs.ctx) {
+			q := ncs.store.Quad(it.Result())
+
+			// Look for has_output relationships from this build
+			if q.Subject == buildIRI && q.Predicate.String() == `"`+PredicateHasOutput+`"` {
+				// Load the target
+				var target NinjaTarget
+				err := ncs.schema.LoadTo(ncs.ctx, ncs.store, &target, q.Object)
+				if err != nil {
+					continue // Skip targets we can't load
+				}
+				targets = append(targets, &target)
+			}
+		}
+
+		if err := it.Err(); err != nil {
+			return nil, fmt.Errorf("failed to iterate quads for build %s: %w", buildIRI, err)
+		}
+	}
+
+	return targets, nil
 }
 
 // UpdateTargetStatus updates the status of a target
