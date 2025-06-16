@@ -342,22 +342,66 @@ func (ncs *NinjaCayleyStore) GetTarget(path string) (*NinjaTarget, error) {
 
 // GetBuildDependencies returns all dependencies of a target
 func (ncs *NinjaCayleyStore) GetBuildDependencies(targetPath string) ([]*NinjaFile, error) {
-	// Query for all files that the target depends on
-	p := cayley.StartPath(ncs.store, quad.IRI(fmt.Sprintf("target:%s", targetPath))).
-		Out(quad.IRI(PredicateDependsOn))
+	targetIRI := quad.IRI(fmt.Sprintf("target:%s", targetPath))
 
-	var dependencies []NinjaFile
-	err := ncs.schema.LoadPathTo(ncs.ctx, ncs.store, &dependencies, p)
+	// Debug: First check if the target exists
+	var target NinjaTarget
+	err := ncs.schema.LoadTo(ncs.ctx, ncs.store, &target, targetIRI)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get dependencies for %s: %w", targetPath, err)
+		return nil, fmt.Errorf("target %s not found: %w", targetPath, err)
 	}
 
-	var result []*NinjaFile
-	for i := range dependencies {
-		result = append(result, &dependencies[i])
+	// Get the build ID from the target
+	buildIRI := target.Build
+
+	// Load the build object
+	var build NinjaBuild
+	err = ncs.schema.LoadTo(ncs.ctx, ncs.store, &build, buildIRI)
+	if err != nil {
+		return nil, fmt.Errorf("build %s not found: %w", buildIRI, err)
 	}
 
-	return result, nil
+	// Now manually query for files related to this build
+	var dependencies []*NinjaFile
+
+	// Query for input files
+	inputsIt := ncs.store.QuadsAllIterator()
+	defer func(inputsIt graph.Iterator) {
+		_ = inputsIt.Close()
+	}(inputsIt)
+
+	for inputsIt.Next(ncs.ctx) {
+		q := ncs.store.Quad(inputsIt.Result())
+
+		// Check if this quad represents an input relationship
+		// Note: predicates are stored as string literals, not IRIs
+		if q.Subject == buildIRI && q.Predicate == quad.String(PredicateHasInput) {
+			// Load the file object
+			var file NinjaFile
+			err := ncs.schema.LoadTo(ncs.ctx, ncs.store, &file, q.Object)
+			if err != nil {
+				continue // Skip if we can't load the file
+			}
+			dependencies = append(dependencies, &file)
+		}
+
+		// Check if this quad represents an implicit dependency relationship
+		if q.Subject == buildIRI && q.Predicate == quad.String(PredicateHasImplicitDep) {
+			// Load the file object
+			var file NinjaFile
+			err := ncs.schema.LoadTo(ncs.ctx, ncs.store, &file, q.Object)
+			if err != nil {
+				continue // Skip if we can't load the file
+			}
+			dependencies = append(dependencies, &file)
+		}
+	}
+
+	if err := inputsIt.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate quads: %w", err)
+	}
+
+	return dependencies, nil
 }
 
 // GetReverseDependencies returns all targets that depend on a file
@@ -659,6 +703,26 @@ func (ncs *NinjaCayleyStore) GetBuildStats() (map[string]interface{}, error) {
 	return stats, nil
 }
 
+// DebugQuads prints all quads in the database for debugging
+func (ncs *NinjaCayleyStore) DebugQuads() error {
+	it := ncs.store.QuadsAllIterator()
+	defer func(it graph.Iterator) {
+		_ = it.Close()
+	}(it)
+
+	fmt.Println("\nDEBUG: All quads in database")
+
+	count := 0
+	for it.Next(ncs.ctx) {
+		q := ncs.store.Quad(it.Result())
+		fmt.Printf("  %s -> %s -> %s\n", q.Subject, q.Predicate, q.Object)
+		count++
+	}
+	fmt.Printf("Total quads: %d\n", count)
+
+	return it.Err()
+}
+
 func (ncs *NinjaCayleyStore) CleanupDatabase() error {
 	if err := ncs.Close(); err != nil {
 		return err
@@ -848,6 +912,26 @@ func main() {
 	}
 	fmt.Printf("\nloaded build: %+v\n", build)
 
+	target, err = ncs.GetTarget("build/util.o")
+	if err != nil {
+		fmt.Println("Failed to get util target:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+	fmt.Printf("\nloaded target: %+v\n", target)
+
+	deps, err = ncs.GetBuildDependencies("build/util.o")
+	if err != nil {
+		fmt.Println("Failed to get util dependencies:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+
+	fmt.Println("\nloaded dependencies: ")
+	for _, dep := range deps {
+		fmt.Printf("%+v\n", dep)
+	}
+
 	appBuild := &NinjaBuild{
 		BuildID: "app_exe",
 		Rule:    quad.IRI("rule:link"),
@@ -882,6 +966,14 @@ func main() {
 	}
 	fmt.Printf("\nloaded build: %+v\n", build)
 
+	target, err = ncs.GetTarget("build/app")
+	if err != nil {
+		fmt.Println("Failed to get app target:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+	fmt.Printf("\nloaded target: %+v\n", target)
+
 	deps, err = ncs.GetBuildDependencies("build/app")
 	if err != nil {
 		fmt.Println("Failed to get app dependencies:", err.Error())
@@ -892,6 +984,12 @@ func main() {
 	fmt.Println("\nloaded dependencies: ")
 	for _, dep := range deps {
 		fmt.Printf("%+v\n", dep)
+	}
+
+	if err = ncs.DebugQuads(); err != nil {
+		fmt.Println("Failed to debug quads:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
 	}
 
 	// Query the build graph
