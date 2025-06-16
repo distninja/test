@@ -424,34 +424,112 @@ func (ncs *NinjaCayleyStore) GetReverseDependencies(filePath string) ([]*NinjaTa
 	return result, nil
 }
 
+// GetBuildStats returns statistics about the build graph
+func (ncs *NinjaCayleyStore) GetBuildStats() (map[string]interface{}, error) {
+	stats := make(map[string]interface{})
+
+	// Count by iterating through all quads and checking types manually
+	it := ncs.store.QuadsAllIterator()
+	defer func(it graph.Iterator) {
+		_ = it.Close()
+	}(it)
+
+	rulesCount := 0
+	buildsCount := 0
+	targetsCount := 0
+	filesCount := 0
+	quadCount := 0
+	relationshipCount := 0
+
+	seenObjects := make(map[string]bool) // Track unique objects by type
+
+	for it.Next(ncs.ctx) {
+		q := ncs.store.Quad(it.Result())
+		quadCount++
+
+		// Check for type declarations
+		if q.Predicate.String() == `<rdf:type>` {
+			objectType := q.Object.String()
+			subject := q.Subject.String()
+
+			// Only count each object once
+			key := subject + ":" + objectType
+			if !seenObjects[key] {
+				seenObjects[key] = true
+
+				switch objectType {
+				case `<NinjaRule>`:
+					rulesCount++
+				case `<NinjaBuild>`:
+					buildsCount++
+				case `<NinjaTarget>`:
+					targetsCount++
+				case `<NinjaFile>`:
+					filesCount++
+				}
+			}
+		}
+
+		// Count relationship predicates
+		predicate := q.Predicate.String()
+		if predicate == `"`+PredicateHasInput+`"` ||
+			predicate == `"`+PredicateHasOutput+`"` ||
+			predicate == `"`+PredicateHasImplicitDep+`"` ||
+			predicate == `"`+PredicateHasOrderDep+`"` ||
+			predicate == `"`+PredicateDependsOn+`"` {
+			relationshipCount++
+		}
+	}
+
+	if err := it.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate quads: %w", err)
+	}
+
+	stats["rules"] = rulesCount
+	stats["builds"] = buildsCount
+	stats["targets"] = targetsCount
+	stats["files"] = filesCount
+	stats["total_quads"] = quadCount
+	stats["relationships"] = relationshipCount
+
+	return stats, nil
+}
+
 // GetBuildOrder returns targets in topological order
 func (ncs *NinjaCayleyStore) GetBuildOrder() ([]string, error) {
 	// Get all targets
-	targets, err := ncs.GetAllTargets()
+	var allTargets []*NinjaTarget
+	allTargets, err := ncs.GetAllTargets()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all targets: %w", err)
 	}
 
+	if len(allTargets) == 0 {
+		return []string{}, nil
+	}
+
 	// Build dependency graph
-	depGraph := make(map[string][]string)
+	g := make(map[string][]string)
 	inDegree := make(map[string]int)
 
-	for _, target := range targets {
-		depGraph[target.Path] = []string{}
+	// Initialize all targets in the graph
+	for _, target := range allTargets {
+		g[target.Path] = []string{}
 		inDegree[target.Path] = 0
 	}
 
 	// Populate dependencies
-	for _, target := range targets {
+	for _, target := range allTargets {
 		deps, err := ncs.GetBuildDependencies(target.Path)
 		if err != nil {
-			continue
+			continue // Skip targets we can't get dependencies for
 		}
 
 		for _, dep := range deps {
-			// Check if dependency is also a target
-			if _, exists := inDegree[dep.Path]; exists {
-				depGraph[dep.Path] = append(depGraph[dep.Path], target.Path)
+			// Check if the dependency is also a target (built file)
+			if _, exists := g[dep.Path]; exists {
+				// Add edge: dep.Path -> target.Path
+				g[dep.Path] = append(g[dep.Path], target.Path)
 				inDegree[target.Path]++
 			}
 		}
@@ -459,19 +537,24 @@ func (ncs *NinjaCayleyStore) GetBuildOrder() ([]string, error) {
 
 	// Topological sort using Kahn's algorithm
 	var queue []string
+	var result []string
+
+	// Find all nodes with no incoming edges
 	for target, degree := range inDegree {
 		if degree == 0 {
 			queue = append(queue, target)
 		}
 	}
 
-	var result []string
+	// Process queue
 	for len(queue) > 0 {
+		// Remove first element from queue
 		current := queue[0]
 		queue = queue[1:]
 		result = append(result, current)
 
-		for _, neighbor := range depGraph[current] {
+		// For each neighbor of current
+		for _, neighbor := range g[current] {
 			inDegree[neighbor]--
 			if inDegree[neighbor] == 0 {
 				queue = append(queue, neighbor)
@@ -479,26 +562,9 @@ func (ncs *NinjaCayleyStore) GetBuildOrder() ([]string, error) {
 		}
 	}
 
-	if len(result) != len(targets) {
-		return nil, fmt.Errorf("circular dependency detected")
-	}
-
-	return result, nil
-}
-
-// GetAllTargets returns all targets in the graph
-func (ncs *NinjaCayleyStore) GetAllTargets() ([]*NinjaTarget, error) {
-	p := cayley.StartPath(ncs.store).Has(quad.IRI("@type"), quad.IRI("NinjaTarget"))
-
-	var targets []NinjaTarget
-	err := ncs.schema.LoadPathTo(ncs.ctx, ncs.store, &targets, p)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get all targets: %w", err)
-	}
-
-	var result []*NinjaTarget
-	for i := range targets {
-		result = append(result, &targets[i])
+	// Check for cycles
+	if len(result) != len(allTargets) {
+		return nil, fmt.Errorf("circular dependency detected in build graph")
 	}
 
 	return result, nil
@@ -628,60 +694,24 @@ func (ncs *NinjaCayleyStore) FindCycles() ([][]string, error) {
 	return cycles, nil
 }
 
-// GetBuildStats returns statistics about the build graph
-func (ncs *NinjaCayleyStore) GetBuildStats() (map[string]interface{}, error) {
-	stats := make(map[string]interface{})
+// GetAllTargets returns all targets in the graph
+func (ncs *NinjaCayleyStore) GetAllTargets() ([]*NinjaTarget, error) {
+	var targets []*NinjaTarget
 
-	// Count by iterating through all quads and checking types manually
+	// Iterate through all quads to find targets
 	it := ncs.store.QuadsAllIterator()
 	defer func(it graph.Iterator) {
 		_ = it.Close()
 	}(it)
 
-	rulesCount := 0
-	buildsCount := 0
-	targetsCount := 0
-	filesCount := 0
-	quadCount := 0
-	relationshipCount := 0
-
-	seenObjects := make(map[string]bool) // Track unique objects by type
+	targetIRIs := make(map[quad.Value]bool)
 
 	for it.Next(ncs.ctx) {
 		q := ncs.store.Quad(it.Result())
-		quadCount++
 
-		// Check for type declarations
-		if q.Predicate.String() == `<rdf:type>` {
-			objectType := q.Object.String()
-			subject := q.Subject.String()
-
-			// Only count each object once
-			key := subject + ":" + objectType
-			if !seenObjects[key] {
-				seenObjects[key] = true
-
-				switch objectType {
-				case `<NinjaRule>`:
-					rulesCount++
-				case `<NinjaBuild>`:
-					buildsCount++
-				case `<NinjaTarget>`:
-					targetsCount++
-				case `<NinjaFile>`:
-					filesCount++
-				}
-			}
-		}
-
-		// Count relationship predicates
-		predicate := q.Predicate.String()
-		if predicate == `"`+PredicateHasInput+`"` ||
-			predicate == `"`+PredicateHasOutput+`"` ||
-			predicate == `"`+PredicateHasImplicitDep+`"` ||
-			predicate == `"`+PredicateHasOrderDep+`"` ||
-			predicate == `"`+PredicateDependsOn+`"` {
-			relationshipCount++
+		// Look for type declarations of NinjaTarget
+		if q.Predicate.String() == `<rdf:type>` && q.Object.String() == `<NinjaTarget>` {
+			targetIRIs[q.Subject] = true
 		}
 	}
 
@@ -689,14 +719,17 @@ func (ncs *NinjaCayleyStore) GetBuildStats() (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to iterate quads: %w", err)
 	}
 
-	stats["rules"] = rulesCount
-	stats["builds"] = buildsCount
-	stats["targets"] = targetsCount
-	stats["files"] = filesCount
-	stats["total_quads"] = quadCount
-	stats["relationships"] = relationshipCount
+	// Load each target
+	for targetIRI := range targetIRIs {
+		var target NinjaTarget
+		err := ncs.schema.LoadTo(ncs.ctx, ncs.store, &target, targetIRI)
+		if err != nil {
+			continue // Skip targets we can't load
+		}
+		targets = append(targets, &target)
+	}
 
-	return stats, nil
+	return targets, nil
 }
 
 // DebugQuads prints all quads in the database for debugging
@@ -988,6 +1021,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Get reverse dependencies
+	reverseDeps, err := ncs.GetReverseDependencies("src/common.h")
+	if err != nil {
+		fmt.Println("Failed to get reverse dependencies:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
+	}
+
+	fmt.Println("\nTargets depending on 'src/common.h':")
+	for _, target := range reverseDeps {
+		fmt.Printf("  - %s\n", target.Path)
+	}
+
 	// Query the build graph
 	fmt.Println("\nNinja Build Graph with Cayley")
 
@@ -1017,17 +1063,25 @@ func main() {
 		fmt.Printf("  %d. %s\n", i+1, target)
 	}
 
-	// Get reverse dependencies
-	reverseDeps, err := ncs.GetReverseDependencies("src/common.h")
+	// Get targets by rule
+	cxxTargets, err := ncs.GetTargetsByRule("cxx")
 	if err != nil {
-		fmt.Println("Failed to get reverse dependencies:", err.Error())
+		fmt.Println("Failed to get targets by rule:", err.Error())
 		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
 
-	fmt.Println("\nTargets depending on 'src/common.h':")
-	for _, target := range reverseDeps {
-		fmt.Printf("  - %s\n", target.Path)
+	fmt.Println("\nTargets built with 'cxx' rule:")
+	for _, target := range cxxTargets {
+		fmt.Printf("  - %s (status: %s)\n", target.Path, target.Status)
+	}
+
+	// Update target status
+	err = ncs.UpdateTargetStatus("build/main.o", "building")
+	if err != nil {
+		fmt.Println("Failed to update target status:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
 	}
 
 	// Check for cycles
@@ -1045,27 +1099,6 @@ func main() {
 		}
 	} else {
 		fmt.Println("\nNo circular dependencies found.")
-	}
-
-	// Update target status
-	err = ncs.UpdateTargetStatus("build/main.o", "building")
-	if err != nil {
-		fmt.Println("Failed to update target status:", err.Error())
-		_ = ncs.CleanupDatabase()
-		os.Exit(1)
-	}
-
-	// Get targets by rule
-	cxxTargets, err := ncs.GetTargetsByRule("cxx")
-	if err != nil {
-		fmt.Println("Failed to get targets by rule:", err.Error())
-		_ = ncs.CleanupDatabase()
-		os.Exit(1)
-	}
-
-	fmt.Println("\nTargets built with 'cxx' rule:")
-	for _, target := range cxxTargets {
-		fmt.Printf("  - %s (status: %s)\n", target.Path, target.Status)
 	}
 
 	fmt.Println("\nDatabase operations completed successfully!")
