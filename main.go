@@ -1050,12 +1050,6 @@ func main() {
 		fmt.Printf("%+v\n", dep)
 	}
 
-	if err = ncs.DebugQuads(); err != nil {
-		fmt.Println("Failed to debug quads:", err.Error())
-		_ = ncs.CleanupDatabase()
-		os.Exit(1)
-	}
-
 	// Get reverse dependencies
 	reverseDeps, err := ncs.GetReverseDependencies("src/common.h")
 	if err != nil {
@@ -1134,6 +1128,12 @@ func main() {
 		}
 	} else {
 		fmt.Println("\nNo circular dependencies found.")
+	}
+
+	if err = ncs.DebugQuads(); err != nil {
+		fmt.Println("Failed to debug quads:", err.Error())
+		_ = ncs.CleanupDatabase()
+		os.Exit(1)
 	}
 
 	fmt.Println("\nDatabase operations completed successfully!")
