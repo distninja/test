@@ -632,73 +632,69 @@ func (ncs *NinjaCayleyStore) FindCycles() ([][]string, error) {
 func (ncs *NinjaCayleyStore) GetBuildStats() (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 
-	// Count rules
-	rulesPath := cayley.StartPath(ncs.store).Has(quad.IRI("@type"), quad.IRI("NinjaRule"))
-	rulesIt, _ := rulesPath.BuildIterator().Optimize()
+	// Count by iterating through all quads and checking types manually
+	it := ncs.store.QuadsAllIterator()
+	defer func(it graph.Iterator) {
+		_ = it.Close()
+	}(it)
 
-	defer func(rulesIt graph.Iterator) {
-		_ = rulesIt.Close()
-	}(rulesIt)
+	rulesCount := 0
+	buildsCount := 0
+	targetsCount := 0
+	filesCount := 0
+	quadCount := 0
+	relationshipCount := 0
 
-	ruleCount := 0
-	for rulesIt.Next(ncs.ctx) {
-		ruleCount++
+	seenObjects := make(map[string]bool) // Track unique objects by type
+
+	for it.Next(ncs.ctx) {
+		q := ncs.store.Quad(it.Result())
+		quadCount++
+
+		// Check for type declarations
+		if q.Predicate.String() == `<rdf:type>` {
+			objectType := q.Object.String()
+			subject := q.Subject.String()
+
+			// Only count each object once
+			key := subject + ":" + objectType
+			if !seenObjects[key] {
+				seenObjects[key] = true
+
+				switch objectType {
+				case `<NinjaRule>`:
+					rulesCount++
+				case `<NinjaBuild>`:
+					buildsCount++
+				case `<NinjaTarget>`:
+					targetsCount++
+				case `<NinjaFile>`:
+					filesCount++
+				}
+			}
+		}
+
+		// Count relationship predicates
+		predicate := q.Predicate.String()
+		if predicate == `"`+PredicateHasInput+`"` ||
+			predicate == `"`+PredicateHasOutput+`"` ||
+			predicate == `"`+PredicateHasImplicitDep+`"` ||
+			predicate == `"`+PredicateHasOrderDep+`"` ||
+			predicate == `"`+PredicateDependsOn+`"` {
+			relationshipCount++
+		}
 	}
-	if err := rulesIt.Err(); err != nil {
-		return nil, fmt.Errorf("failed to count rules: %w", err)
+
+	if err := it.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate quads: %w", err)
 	}
-	stats["total_rules"] = ruleCount
 
-	// Count builds
-	buildsPath := cayley.StartPath(ncs.store).Has(quad.IRI("@type"), quad.IRI("NinjaBuild"))
-	buildsIt, _ := buildsPath.BuildIterator().Optimize()
-
-	defer func(buildsIt graph.Iterator) {
-		_ = buildsIt.Close()
-	}(buildsIt)
-
-	buildCount := 0
-	for buildsIt.Next(ncs.ctx) {
-		buildCount++
-	}
-	if err := buildsIt.Err(); err != nil {
-		return nil, fmt.Errorf("failed to count builds: %w", err)
-	}
-	stats["total_builds"] = buildCount
-
-	// Count targets
-	targetsPath := cayley.StartPath(ncs.store).Has(quad.IRI("@type"), quad.IRI("NinjaTarget"))
-	targetsIt, _ := targetsPath.BuildIterator().Optimize()
-
-	defer func(targetsIt graph.Iterator) {
-		_ = targetsIt.Close()
-	}(targetsIt)
-
-	targetCount := 0
-	for targetsIt.Next(ncs.ctx) {
-		targetCount++
-	}
-	if err := targetsIt.Err(); err != nil {
-		return nil, fmt.Errorf("failed to count targets: %w", err)
-	}
-	stats["total_targets"] = targetCount
-
-	// Count files
-	filesPath := cayley.StartPath(ncs.store).Has(quad.IRI("@type"), quad.IRI("NinjaFile"))
-	filesIt, _ := filesPath.BuildIterator().Optimize()
-
-	defer func(filesIt graph.Iterator) {
-		_ = filesIt.Close()
-	}(filesIt)
-
-	fileCount := 0
-	for filesIt.Next(ncs.ctx) {
-		fileCount++
-	}
-	if err := filesIt.Err(); err != nil {
-		return nil, fmt.Errorf("failed to count files: %w", err)
-	}
-	stats["total_files"] = fileCount
+	stats["rules"] = rulesCount
+	stats["builds"] = buildsCount
+	stats["targets"] = targetsCount
+	stats["files"] = filesCount
+	stats["total_quads"] = quadCount
+	stats["relationships"] = relationshipCount
 
 	return stats, nil
 }
