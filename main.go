@@ -244,7 +244,7 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 		}
 
 		// Link build to output
-		quads = append(quads, quad.Make(build.ID, PredicateHasOutput, quad.IRI(fmt.Sprintf("target:%s", output)), nil))
+		quads = append(quads, quad.Make(build.ID, quad.String(PredicateHasOutput), quad.IRI(fmt.Sprintf("target:%s", output)), nil))
 	}
 
 	// Create input file nodes and relationships
@@ -262,13 +262,13 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 		}
 
 		// Link build to input
-		quads = append(quads, quad.Make(build.ID, PredicateHasInput, quad.IRI(fmt.Sprintf("file:%s", input)), nil))
+		quads = append(quads, quad.Make(build.ID, quad.String(PredicateHasInput), quad.IRI(fmt.Sprintf("file:%s", input)), nil))
 
 		// Create dependencies from outputs to inputs
 		for _, output := range outputs {
 			quads = append(quads, quad.Make(
 				quad.IRI(fmt.Sprintf("target:%s", output)),
-				PredicateDependsOn,
+				quad.String(PredicateDependsOn),
 				quad.IRI(fmt.Sprintf("file:%s", input)),
 				nil,
 			))
@@ -289,12 +289,12 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 			return fmt.Errorf("failed to write implicit dep: %w", err)
 		}
 
-		quads = append(quads, quad.Make(build.ID, PredicateHasImplicitDep, quad.IRI(fmt.Sprintf("file:%s", implicitDep)), nil))
+		quads = append(quads, quad.Make(build.ID, quad.String(PredicateHasImplicitDep), quad.IRI(fmt.Sprintf("file:%s", implicitDep)), nil))
 
 		for _, output := range outputs {
 			quads = append(quads, quad.Make(
 				quad.IRI(fmt.Sprintf("target:%s", output)),
-				PredicateDependsOn,
+				quad.String(PredicateDependsOn),
 				quad.IRI(fmt.Sprintf("file:%s", implicitDep)),
 				nil,
 			))
@@ -303,7 +303,7 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 
 	// Handle order-only dependencies
 	for _, orderDep := range orderDeps {
-		quads = append(quads, quad.Make(build.ID, PredicateHasOrderDep, quad.IRI(fmt.Sprintf("file:%s", orderDep)), nil))
+		quads = append(quads, quad.Make(build.ID, quad.String(PredicateHasOrderDep), quad.IRI(fmt.Sprintf("file:%s", orderDep)), nil))
 	}
 
 	// Write all quads at once
@@ -407,8 +407,9 @@ func (ncs *NinjaCayleyStore) GetBuildDependencies(targetPath string) ([]*NinjaFi
 // GetReverseDependencies returns all targets that depend on a file
 func (ncs *NinjaCayleyStore) GetReverseDependencies(filePath string) ([]*NinjaTarget, error) {
 	// Query for all targets that depend on this file
+	// Use quad.String instead of quad.IRI for the predicate
 	p := cayley.StartPath(ncs.store, quad.IRI(fmt.Sprintf("file:%s", filePath))).
-		In(quad.IRI(PredicateDependsOn))
+		In(quad.String(PredicateDependsOn))
 
 	var dependents []NinjaTarget
 	err := ncs.schema.LoadPathTo(ncs.ctx, ncs.store, &dependents, p)
@@ -787,6 +788,52 @@ func (ncs *NinjaCayleyStore) DebugQuads() error {
 	return it.Err()
 }
 
+// DebugDependencyGraph Add this debug function to understand the graph structure
+func (ncs *NinjaCayleyStore) DebugDependencyGraph(filePath string) {
+	fileIRI := quad.IRI(fmt.Sprintf("file:%s", filePath))
+
+	fmt.Printf("Debugging dependency graph for %s\n", filePath)
+
+	// Try different traversal directions
+	fmt.Println("\nTrying In() traversal")
+	p1 := cayley.StartPath(ncs.store, fileIRI).In(quad.IRI(PredicateDependsOn))
+	var deps1 []NinjaTarget
+	err1 := ncs.schema.LoadPathTo(ncs.ctx, ncs.store, &deps1, p1)
+	fmt.Printf("In() result: %d items, error: %v\n", len(deps1), err1)
+
+	fmt.Println("\nTrying Out() traversal")
+	p2 := cayley.StartPath(ncs.store, fileIRI).Out(quad.IRI(PredicateDependsOn))
+	var deps2 []NinjaTarget
+	err2 := ncs.schema.LoadPathTo(ncs.ctx, ncs.store, &deps2, p2)
+	fmt.Printf("Out() result: %d items, error: %v\n", len(deps2), err2)
+
+	fmt.Println("\nChecking Has() approach")
+	p3 := cayley.StartPath(ncs.store).Has(quad.IRI(PredicateDependsOn), fileIRI)
+	var deps3 []NinjaTarget
+	err3 := ncs.schema.LoadPathTo(ncs.ctx, ncs.store, &deps3, p3)
+	fmt.Printf("Has() result: %d items, error: %v\n", len(deps3), err3)
+
+	fmt.Println("\nRaw quad inspection (first 20 quads)")
+	it := ncs.store.QuadsAllIterator()
+	defer func(it graph.Iterator) {
+		_ = it.Close()
+	}(it)
+
+	count := 0
+	for it.Next(ncs.ctx) && count < 20 {
+		q := ncs.store.Quad(it.Result())
+		quadStr := fmt.Sprintf("%s -> %s -> %s", q.Subject, q.Predicate, q.Object)
+
+		// Check if this quad involves our file
+		if strings.Contains(quadStr, "src/common.h") {
+			fmt.Printf("*** %s\n", quadStr)
+		} else {
+			fmt.Printf("    %s\n", quadStr)
+		}
+		count++
+	}
+}
+
 func (ncs *NinjaCayleyStore) CleanupDatabase() error {
 	if err := ncs.Close(); err != nil {
 		return err
@@ -1135,6 +1182,8 @@ func main() {
 		_ = ncs.CleanupDatabase()
 		os.Exit(1)
 	}
+
+	ncs.DebugDependencyGraph("src/common.h")
 
 	fmt.Println("\nDatabase operations completed successfully!")
 }
