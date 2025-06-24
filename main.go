@@ -376,7 +376,15 @@ func (ncs *NinjaStore) GetBuildDependencies(targetPath string) ([]*NinjaFile, er
 	}(inputsIt)
 
 	for inputsIt.Next(ncs.ctx) {
-		q := ncs.store.Quad(inputsIt.Result())
+		result := inputsIt.Result()
+		if result == nil {
+			continue
+		}
+
+		q := ncs.store.Quad(result)
+		if q.Subject == nil || q.Predicate == nil || q.Object == nil {
+			continue
+		}
 
 		// Check if this quad represents an input relationship
 		// Note: predicates are stored as string literals, not IRIs
@@ -432,10 +440,18 @@ func (ncs *NinjaStore) GetReverseDependencies(filePath string) ([]*NinjaTarget, 
 
 // GetBuildStats returns statistics about the build graph
 func (ncs *NinjaStore) GetBuildStats() (map[string]interface{}, error) {
+	if ncs == nil || ncs.store == nil || ncs.ctx == nil {
+		return nil, fmt.Errorf("invalid store or context")
+	}
+
 	stats := make(map[string]interface{})
 
 	// Count by iterating through all quads and checking types manually
 	it := ncs.store.QuadsAllIterator()
+	if it == nil {
+		return nil, fmt.Errorf("failed to create iterator")
+	}
+
 	defer func(it graph.Iterator) {
 		_ = it.Close()
 	}(it)
@@ -450,7 +466,16 @@ func (ncs *NinjaStore) GetBuildStats() (map[string]interface{}, error) {
 	seenObjects := make(map[string]bool) // Track unique objects by type
 
 	for it.Next(ncs.ctx) {
-		q := ncs.store.Quad(it.Result())
+		result := it.Result()
+		if result == nil {
+			continue
+		}
+
+		q := ncs.store.Quad(result)
+		if q.Subject == nil || q.Predicate == nil || q.Object == nil {
+			continue
+		}
+
 		quadCount++
 
 		// Check for type declarations
@@ -591,7 +616,15 @@ func (ncs *NinjaStore) GetTargetsByRule(ruleName string) ([]*NinjaTarget, error)
 	var buildIRIs []quad.Value
 
 	for it.Next(ncs.ctx) {
-		q := ncs.store.Quad(it.Result())
+		result := it.Result()
+		if result == nil {
+			continue
+		}
+
+		q := ncs.store.Quad(result)
+		if q.Subject == nil || q.Predicate == nil || q.Object == nil {
+			continue
+		}
 
 		// Look for builds that reference this rule
 		if q.Predicate.String() == `<rule>` && q.Object == ruleIRI {
@@ -609,7 +642,16 @@ func (ncs *NinjaStore) GetTargetsByRule(ruleName string) ([]*NinjaTarget, error)
 		it := ncs.store.QuadsAllIterator()
 
 		for it.Next(ncs.ctx) {
-			q := ncs.store.Quad(it.Result())
+			result := it.Result()
+			if result == nil {
+				continue
+			}
+
+			q := ncs.store.Quad(result)
+			if q.Subject == nil || q.Predicate == nil || q.Object == nil {
+				continue
+			}
+
 			// Look for has_output relationships from this build
 			if q.Subject == buildIRI && q.Predicate.String() == `"`+PredicateHasOutput+`"` {
 				// Load the target
@@ -648,7 +690,15 @@ func (ncs *NinjaStore) UpdateTargetStatus(targetPath, status string) error {
 
 	for it.Next(ncs.ctx) {
 		ref := it.Result()
+		if ref == nil {
+			continue
+		}
+
 		q := ncs.store.Quad(ref)
+		if q.Subject == nil || q.Predicate == nil || q.Object == nil {
+			continue
+		}
+
 		if q.Subject == targetIRI && q.Predicate == quad.IRI("status") {
 			tx.RemoveQuad(q)
 		}
@@ -748,7 +798,15 @@ func (ncs *NinjaStore) GetAllTargets() ([]*NinjaTarget, error) {
 	targetIRIs := make(map[quad.Value]bool)
 
 	for it.Next(ncs.ctx) {
-		q := ncs.store.Quad(it.Result())
+		result := it.Result()
+		if result == nil {
+			continue
+		}
+
+		q := ncs.store.Quad(result)
+		if q.Subject == nil || q.Predicate == nil || q.Object == nil {
+			continue
+		}
 
 		// Look for type declarations of NinjaTarget
 		if q.Predicate.String() == `<rdf:type>` && q.Object.String() == `<NinjaTarget>` {
@@ -784,7 +842,16 @@ func (ncs *NinjaStore) DebugQuads() error {
 
 	count := 0
 	for it.Next(ncs.ctx) {
-		q := ncs.store.Quad(it.Result())
+		result := it.Result()
+		if result == nil {
+			continue
+		}
+
+		q := ncs.store.Quad(result)
+		if q.Subject == nil || q.Predicate == nil || q.Object == nil {
+			continue
+		}
+
 		fmt.Printf("  %s -> %s -> %s\n", q.Subject, q.Predicate, q.Object)
 		count++
 	}
@@ -826,7 +893,16 @@ func (ncs *NinjaStore) DebugDependencyGraph(filePath string) {
 
 	count := 0
 	for it.Next(ncs.ctx) && count < 20 {
-		q := ncs.store.Quad(it.Result())
+		result := it.Result()
+		if result == nil {
+			continue
+		}
+
+		q := ncs.store.Quad(result)
+		if q.Subject == nil || q.Predicate == nil || q.Object == nil {
+			continue
+		}
+
 		quadStr := fmt.Sprintf("%s -> %s -> %s", q.Subject, q.Predicate, q.Object)
 
 		// Check if this quad involves our file
