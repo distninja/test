@@ -610,13 +610,9 @@ func (ncs *NinjaStore) GetTargetsByRule(ruleName string) ([]*NinjaTarget, error)
 	for _, buildIRI := range buildIRIs {
 		// Find targets that are outputs of this build
 		it := ncs.store.QuadsAllIterator()
-		defer func(it graph.Iterator) {
-			_ = it.Close()
-		}(it)
 
 		for it.Next(ncs.ctx) {
 			q := ncs.store.Quad(it.Result())
-
 			// Look for has_output relationships from this build
 			if q.Subject == buildIRI && q.Predicate.String() == `"`+PredicateHasOutput+`"` {
 				// Load the target
@@ -630,8 +626,11 @@ func (ncs *NinjaStore) GetTargetsByRule(ruleName string) ([]*NinjaTarget, error)
 		}
 
 		if err := it.Err(); err != nil {
+			_ = it.Close()
 			return nil, fmt.Errorf("failed to iterate quads for build %s: %w", buildIRI, err)
 		}
+
+		_ = it.Close()
 	}
 
 	return targets, nil
