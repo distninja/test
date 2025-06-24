@@ -178,7 +178,7 @@ func (ncs *NinjaStore) Close() error {
 	return ncs.store.Close()
 }
 
-func (ncs *NinjaStore) CleanupDatabase() error {
+func (ncs *NinjaStore) Cleanup() error {
 	_ = ncs.Close()
 	return os.RemoveAll(filepath.Dir(ncs.dbPath))
 }
@@ -871,7 +871,7 @@ func main() {
 	fmt.Printf("Database created at: %s\n", dbPath)
 
 	defer func(ncs *NinjaStore) {
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 	}(ncs)
 
 	// Add build rules
@@ -885,20 +885,20 @@ func main() {
 		"cflags": "-Wall -g -std=c++17",
 	}); err != nil {
 		fmt.Println("Failed to set cxx rule variables:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
 	if _, err := ncs.AddRule(cxxRule); err != nil {
 		fmt.Println("Failed to add cxx rule:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
 	rule, err := ncs.GetRule(cxxRule.Name)
 	if err != nil {
 		fmt.Println("Failed to get cxx rule:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 	fmt.Printf("\nloaded rule: %+v\n", rule)
@@ -913,20 +913,20 @@ func main() {
 		"ldflags": "-pthread -lm",
 	}); err != nil {
 		fmt.Println("Failed to set link rule variables:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
 	if _, err = ncs.AddRule(linkRule); err != nil {
 		fmt.Println("Failed to add link rule:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
 	rule, err = ncs.GetRule(linkRule.Name)
 	if err != nil {
 		fmt.Println("Failed to get link rule:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 	fmt.Printf("\nloaded rule: %+v\n", rule)
@@ -941,7 +941,7 @@ func main() {
 	// Initialize variables to empty map
 	if err := mainBuild.SetVariables(map[string]string{}); err != nil {
 		fmt.Println("Failed to set main build variables:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -954,14 +954,14 @@ func main() {
 	)
 	if err != nil {
 		fmt.Println("Failed to add main build:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
 	build, err := ncs.GetBuild(mainBuild.BuildID)
 	if err != nil {
 		fmt.Println("Failed to get main build:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 	fmt.Printf("\nloaded build: %+v\n", build)
@@ -969,7 +969,7 @@ func main() {
 	target, err := ncs.GetTarget("build/main.o")
 	if err != nil {
 		fmt.Println("Failed to get main target:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 	fmt.Printf("\nloaded target: %+v\n", target)
@@ -977,7 +977,7 @@ func main() {
 	deps, err := ncs.GetBuildDependencies("build/main.o")
 	if err != nil {
 		fmt.Println("Failed to get main dependencies:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -995,7 +995,7 @@ func main() {
 	// Initialize variables to empty map
 	if err := utilBuild.SetVariables(map[string]string{}); err != nil {
 		fmt.Println("Failed to set util build variables:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -1008,14 +1008,14 @@ func main() {
 	)
 	if err != nil {
 		fmt.Println("Failed to add util build:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
 	build, err = ncs.GetBuild(utilBuild.BuildID)
 	if err != nil {
 		fmt.Println("Failed to get util build:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 	fmt.Printf("\nloaded build: %+v\n", build)
@@ -1023,7 +1023,7 @@ func main() {
 	target, err = ncs.GetTarget("build/util.o")
 	if err != nil {
 		fmt.Println("Failed to get util target:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 	fmt.Printf("\nloaded target: %+v\n", target)
@@ -1031,7 +1031,7 @@ func main() {
 	deps, err = ncs.GetBuildDependencies("build/util.o")
 	if err != nil {
 		fmt.Println("Failed to get util dependencies:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -1049,7 +1049,7 @@ func main() {
 	// Initialize variables to empty map
 	if err := appBuild.SetVariables(map[string]string{}); err != nil {
 		fmt.Println("Failed to set app build variables:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -1062,14 +1062,14 @@ func main() {
 	)
 	if err != nil {
 		fmt.Println("Failed to add app build:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
 	build, err = ncs.GetBuild(appBuild.BuildID)
 	if err != nil {
 		fmt.Println("Failed to get app build:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 	fmt.Printf("\nloaded build: %+v\n", build)
@@ -1077,7 +1077,7 @@ func main() {
 	target, err = ncs.GetTarget("build/app")
 	if err != nil {
 		fmt.Println("Failed to get app target:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 	fmt.Printf("\nloaded target: %+v\n", target)
@@ -1085,7 +1085,7 @@ func main() {
 	deps, err = ncs.GetBuildDependencies("build/app")
 	if err != nil {
 		fmt.Println("Failed to get app dependencies:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -1098,7 +1098,7 @@ func main() {
 	reverseDeps, err := ncs.GetReverseDependencies("src/common.h")
 	if err != nil {
 		fmt.Println("Failed to get reverse dependencies:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -1114,7 +1114,7 @@ func main() {
 	stats, err := ncs.GetBuildStats()
 	if err != nil {
 		fmt.Println("Failed to get build stats:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -1127,7 +1127,7 @@ func main() {
 	buildOrder, err := ncs.GetBuildOrder()
 	if err != nil {
 		fmt.Println("Failed to get build order:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -1140,7 +1140,7 @@ func main() {
 	cxxTargets, err := ncs.GetTargetsByRule("cxx")
 	if err != nil {
 		fmt.Println("Failed to get targets by rule:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -1153,7 +1153,7 @@ func main() {
 	err = ncs.UpdateTargetStatus("build/main.o", "building")
 	if err != nil {
 		fmt.Println("Failed to update target status:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -1161,7 +1161,7 @@ func main() {
 	cycles, err := ncs.FindCycles()
 	if err != nil {
 		fmt.Println("Failed to find cycles:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
@@ -1176,7 +1176,7 @@ func main() {
 
 	if err = ncs.DebugQuads(); err != nil {
 		fmt.Println("Failed to debug quads:", err.Error())
-		_ = ncs.CleanupDatabase()
+		_ = ncs.Cleanup()
 		os.Exit(1)
 	}
 
