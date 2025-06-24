@@ -16,6 +16,33 @@ import (
 	"github.com/cayleygraph/quad"
 )
 
+// Quad predicates for relationships
+const (
+	PredicateHasInput       = "has_input"
+	PredicateHasOutput      = "has_output"
+	PredicateHasImplicitDep = "has_implicit_dep"
+	PredicateHasOrderDep    = "has_order_dep"
+	PredicateDependsOn      = "depends_on"
+)
+
+// NinjaBuild represents a build statement
+type NinjaBuild struct {
+	ID        quad.IRI `json:"@id" quad:"@id"`
+	Type      quad.IRI `json:"@type" quad:"@type"`
+	BuildID   string   `json:"build_id" quad:"build_id"`
+	Rule      quad.IRI `json:"rule" quad:"rule"`
+	Variables string   `json:"variables,omitempty" quad:"variables"`
+	Pool      string   `json:"pool,omitempty" quad:"pool"`
+}
+
+// NinjaFile represents source files and dependencies
+type NinjaFile struct {
+	ID       quad.IRI `json:"@id" quad:"@id"`
+	Type     quad.IRI `json:"@type" quad:"@type"`
+	Path     string   `json:"path" quad:"path"`
+	FileType string   `json:"file_type" quad:"file_type"` // "source", "header", "object", etc.
+}
+
 // NinjaRule represents a build rule in Ninja
 type NinjaRule struct {
 	ID          quad.IRI `json:"@id" quad:"@id"`
@@ -26,43 +53,22 @@ type NinjaRule struct {
 	Variables   string   `json:"variables,omitempty" quad:"variables"`
 }
 
-// SetVariables converts map to JSON string
-func (nr *NinjaRule) SetVariables(variables map[string]string) error {
-	if len(variables) == 0 {
-		nr.Variables = "{}" // Set to empty JSON object instead of empty string
-		return nil
-	}
-
-	jsonBytes, err := json.Marshal(variables)
-	if err != nil {
-		return err
-	}
-
-	nr.Variables = string(jsonBytes)
-
-	return nil
+// NinjaTarget represents a build target
+type NinjaTarget struct {
+	ID     quad.IRI `json:"@id" quad:"@id"`
+	Type   quad.IRI `json:"@type" quad:"@type"`
+	Path   string   `json:"path" quad:"path"`
+	Status string   `json:"status" quad:"status"`
+	Hash   string   `json:"hash,omitempty" quad:"hash"`
+	Build  quad.IRI `json:"build" quad:"build"`
 }
 
-// GetVariables converts JSON string back to map
-func (nr *NinjaRule) GetVariables() (map[string]string, error) {
-	if nr.Variables == "" || nr.Variables == "{}" {
-		return make(map[string]string), nil
-	}
-
-	var variables map[string]string
-	err := json.Unmarshal([]byte(nr.Variables), &variables)
-
-	return variables, err
-}
-
-// NinjaBuild represents a build statement
-type NinjaBuild struct {
-	ID        quad.IRI `json:"@id" quad:"@id"`
-	Type      quad.IRI `json:"@type" quad:"@type"`
-	BuildID   string   `json:"build_id" quad:"build_id"`
-	Rule      quad.IRI `json:"rule" quad:"rule"`
-	Variables string   `json:"variables,omitempty" quad:"variables"`
-	Pool      string   `json:"pool,omitempty" quad:"pool"`
+// NinjaStore implements Ninja build graph using Cayley
+type NinjaStore struct {
+	store  *cayley.Handle
+	schema *schema.Config
+	ctx    context.Context
+	dbPath string
 }
 
 // SetVariables converts map to JSON string
@@ -94,43 +100,37 @@ func (nb *NinjaBuild) GetVariables() (map[string]string, error) {
 	return variables, err
 }
 
-// NinjaTarget represents a build target
-type NinjaTarget struct {
-	ID     quad.IRI `json:"@id" quad:"@id"`
-	Type   quad.IRI `json:"@type" quad:"@type"`
-	Path   string   `json:"path" quad:"path"`
-	Status string   `json:"status" quad:"status"`
-	Hash   string   `json:"hash,omitempty" quad:"hash"`
-	Build  quad.IRI `json:"build" quad:"build"`
+// SetVariables converts map to JSON string
+func (nr *NinjaRule) SetVariables(variables map[string]string) error {
+	if len(variables) == 0 {
+		nr.Variables = "{}" // Set to empty JSON object instead of empty string
+		return nil
+	}
+
+	jsonBytes, err := json.Marshal(variables)
+	if err != nil {
+		return err
+	}
+
+	nr.Variables = string(jsonBytes)
+
+	return nil
 }
 
-// NinjaFile represents source files and dependencies
-type NinjaFile struct {
-	ID       quad.IRI `json:"@id" quad:"@id"`
-	Type     quad.IRI `json:"@type" quad:"@type"`
-	Path     string   `json:"path" quad:"path"`
-	FileType string   `json:"file_type" quad:"file_type"` // "source", "header", "object", etc.
+// GetVariables converts JSON string back to map
+func (nr *NinjaRule) GetVariables() (map[string]string, error) {
+	if nr.Variables == "" || nr.Variables == "{}" {
+		return make(map[string]string), nil
+	}
+
+	var variables map[string]string
+	err := json.Unmarshal([]byte(nr.Variables), &variables)
+
+	return variables, err
 }
 
-// NinjaCayleyStore implements Ninja build graph using Cayley
-type NinjaCayleyStore struct {
-	store  *cayley.Handle
-	schema *schema.Config
-	ctx    context.Context
-	dbPath string
-}
-
-// Quad predicates for relationships
-const (
-	PredicateHasInput       = "has_input"
-	PredicateHasOutput      = "has_output"
-	PredicateHasImplicitDep = "has_implicit_dep"
-	PredicateHasOrderDep    = "has_order_dep"
-	PredicateDependsOn      = "depends_on"
-)
-
-// NewNinjaCayleyStore creates a new Cayley-based Ninja graph store
-func NewNinjaCayleyStore(dbPath string) (*NinjaCayleyStore, error) {
+// NewNinjaStore creates a new Cayley-based Ninja graph store
+func NewNinjaStore(dbPath string) (*NinjaStore, error) {
 	// Ensure the directory exists
 	dbDir := filepath.Dir(dbPath)
 	err := os.MkdirAll(dbDir, 0755)
@@ -144,14 +144,14 @@ func NewNinjaCayleyStore(dbPath string) (*NinjaCayleyStore, error) {
 		// Initialize new database
 		err = graph.InitQuadStore("bolt", dbPath, nil)
 		if err != nil {
-			return nil, fmt.Errorf("failed to initialize Cayley store at %s: %w", dbPath, err)
+			return nil, fmt.Errorf("failed to initialize store at %s: %w", dbPath, err)
 		}
 	}
 
 	// Open the database
 	store, err = cayley.NewGraph("bolt", dbPath, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open Cayley store at %s: %w", dbPath, err)
+		return nil, fmt.Errorf("failed to open store at %s: %w", dbPath, err)
 	}
 
 	// Register types
@@ -165,7 +165,7 @@ func NewNinjaCayleyStore(dbPath string) (*NinjaCayleyStore, error) {
 
 	ctx := context.Background()
 
-	return &NinjaCayleyStore{
+	return &NinjaStore{
 		store:  store,
 		schema: schemaConfig,
 		ctx:    ctx,
@@ -174,12 +174,20 @@ func NewNinjaCayleyStore(dbPath string) (*NinjaCayleyStore, error) {
 }
 
 // Close closes the Cayley store
-func (ncs *NinjaCayleyStore) Close() error {
+func (ncs *NinjaStore) Close() error {
 	return ncs.store.Close()
 }
 
+func (ncs *NinjaStore) CleanupDatabase() error {
+	if err := ncs.Close(); err != nil {
+		return err
+	}
+
+	return os.RemoveAll(filepath.Dir(ncs.dbPath))
+}
+
 // AddRule adds a build rule to the graph
-func (ncs *NinjaCayleyStore) AddRule(rule *NinjaRule) (quad.Value, error) {
+func (ncs *NinjaStore) AddRule(rule *NinjaRule) (quad.Value, error) {
 	qw := graph.NewWriter(ncs.store)
 	defer func(qw graph.BatchWriter) {
 		_ = qw.Close()
@@ -197,7 +205,7 @@ func (ncs *NinjaCayleyStore) AddRule(rule *NinjaRule) (quad.Value, error) {
 }
 
 // GetRule retrieves a rule by name
-func (ncs *NinjaCayleyStore) GetRule(name string) (*NinjaRule, error) {
+func (ncs *NinjaStore) GetRule(name string) (*NinjaRule, error) {
 	var rule NinjaRule
 
 	err := ncs.schema.LoadTo(ncs.ctx, ncs.store, &rule, quad.IRI(fmt.Sprintf("rule:%s", name)))
@@ -209,7 +217,7 @@ func (ncs *NinjaCayleyStore) GetRule(name string) (*NinjaRule, error) {
 }
 
 // AddBuild adds a build statement to the graph
-func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implicitDeps, orderDeps []string) error {
+func (ncs *NinjaStore) AddBuild(build *NinjaBuild, inputs, outputs, implicitDeps, orderDeps []string) error {
 	qw := graph.NewWriter(ncs.store)
 	defer func(qw graph.BatchWriter) {
 		_ = qw.Close()
@@ -318,7 +326,7 @@ func (ncs *NinjaCayleyStore) AddBuild(build *NinjaBuild, inputs, outputs, implic
 }
 
 // GetBuild retrieves a build by name
-func (ncs *NinjaCayleyStore) GetBuild(id string) (*NinjaBuild, error) {
+func (ncs *NinjaStore) GetBuild(id string) (*NinjaBuild, error) {
 	var build NinjaBuild
 
 	err := ncs.schema.LoadTo(ncs.ctx, ncs.store, &build, quad.IRI(fmt.Sprintf("build:%s", id)))
@@ -330,7 +338,7 @@ func (ncs *NinjaCayleyStore) GetBuild(id string) (*NinjaBuild, error) {
 }
 
 // GetTarget retrieves a target by path
-func (ncs *NinjaCayleyStore) GetTarget(path string) (*NinjaTarget, error) {
+func (ncs *NinjaStore) GetTarget(path string) (*NinjaTarget, error) {
 	var target NinjaTarget
 	err := ncs.schema.LoadTo(ncs.ctx, ncs.store, &target, quad.IRI(fmt.Sprintf("target:%s", path)))
 	if err != nil {
@@ -341,7 +349,7 @@ func (ncs *NinjaCayleyStore) GetTarget(path string) (*NinjaTarget, error) {
 }
 
 // GetBuildDependencies returns all dependencies of a target
-func (ncs *NinjaCayleyStore) GetBuildDependencies(targetPath string) ([]*NinjaFile, error) {
+func (ncs *NinjaStore) GetBuildDependencies(targetPath string) ([]*NinjaFile, error) {
 	targetIRI := quad.IRI(fmt.Sprintf("target:%s", targetPath))
 
 	// Debug: First check if the target exists
@@ -405,7 +413,7 @@ func (ncs *NinjaCayleyStore) GetBuildDependencies(targetPath string) ([]*NinjaFi
 }
 
 // GetReverseDependencies returns all targets that depend on a file
-func (ncs *NinjaCayleyStore) GetReverseDependencies(filePath string) ([]*NinjaTarget, error) {
+func (ncs *NinjaStore) GetReverseDependencies(filePath string) ([]*NinjaTarget, error) {
 	// Query for all targets that depend on this file
 	// Use quad.String instead of quad.IRI for the predicate
 	p := cayley.StartPath(ncs.store, quad.IRI(fmt.Sprintf("file:%s", filePath))).
@@ -426,7 +434,7 @@ func (ncs *NinjaCayleyStore) GetReverseDependencies(filePath string) ([]*NinjaTa
 }
 
 // GetBuildStats returns statistics about the build graph
-func (ncs *NinjaCayleyStore) GetBuildStats() (map[string]interface{}, error) {
+func (ncs *NinjaStore) GetBuildStats() (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 
 	// Count by iterating through all quads and checking types manually
@@ -497,9 +505,10 @@ func (ncs *NinjaCayleyStore) GetBuildStats() (map[string]interface{}, error) {
 }
 
 // GetBuildOrder returns targets in topological order
-func (ncs *NinjaCayleyStore) GetBuildOrder() ([]string, error) {
+func (ncs *NinjaStore) GetBuildOrder() ([]string, error) {
 	// Get all targets
 	var allTargets []*NinjaTarget
+
 	allTargets, err := ncs.GetAllTargets()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all targets: %w", err)
@@ -572,7 +581,7 @@ func (ncs *NinjaCayleyStore) GetBuildOrder() ([]string, error) {
 }
 
 // GetTargetsByRule returns all targets built by a specific rule
-func (ncs *NinjaCayleyStore) GetTargetsByRule(ruleName string) ([]*NinjaTarget, error) {
+func (ncs *NinjaStore) GetTargetsByRule(ruleName string) ([]*NinjaTarget, error) {
 	ruleIRI := quad.IRI(fmt.Sprintf("rule:%s", ruleName))
 	var targets []*NinjaTarget
 
@@ -629,7 +638,7 @@ func (ncs *NinjaCayleyStore) GetTargetsByRule(ruleName string) ([]*NinjaTarget, 
 }
 
 // UpdateTargetStatus updates the status of a target
-func (ncs *NinjaCayleyStore) UpdateTargetStatus(targetPath, status string) error {
+func (ncs *NinjaStore) UpdateTargetStatus(targetPath, status string) error {
 	tx := graph.NewTransaction()
 
 	targetIRI := quad.IRI(fmt.Sprintf("target:%s", targetPath))
@@ -661,7 +670,7 @@ func (ncs *NinjaCayleyStore) UpdateTargetStatus(targetPath, status string) error
 }
 
 // FindCycles detects circular dependencies in the build graph
-func (ncs *NinjaCayleyStore) FindCycles() ([][]string, error) {
+func (ncs *NinjaStore) FindCycles() ([][]string, error) {
 	targets, err := ncs.GetAllTargets()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get targets: %w", err)
@@ -731,7 +740,7 @@ func (ncs *NinjaCayleyStore) FindCycles() ([][]string, error) {
 }
 
 // GetAllTargets returns all targets in the graph
-func (ncs *NinjaCayleyStore) GetAllTargets() ([]*NinjaTarget, error) {
+func (ncs *NinjaStore) GetAllTargets() ([]*NinjaTarget, error) {
 	var targets []*NinjaTarget
 
 	// Iterate through all quads to find targets
@@ -769,7 +778,7 @@ func (ncs *NinjaCayleyStore) GetAllTargets() ([]*NinjaTarget, error) {
 }
 
 // DebugQuads prints all quads in the database for debugging
-func (ncs *NinjaCayleyStore) DebugQuads() error {
+func (ncs *NinjaStore) DebugQuads() error {
 	it := ncs.store.QuadsAllIterator()
 	defer func(it graph.Iterator) {
 		_ = it.Close()
@@ -789,7 +798,7 @@ func (ncs *NinjaCayleyStore) DebugQuads() error {
 }
 
 // DebugDependencyGraph Add this debug function to understand the graph structure
-func (ncs *NinjaCayleyStore) DebugDependencyGraph(filePath string) {
+func (ncs *NinjaStore) DebugDependencyGraph(filePath string) {
 	fileIRI := quad.IRI(fmt.Sprintf("file:%s", filePath))
 
 	fmt.Printf("\nDebugging dependency graph for %s\n", filePath)
@@ -834,16 +843,8 @@ func (ncs *NinjaCayleyStore) DebugDependencyGraph(filePath string) {
 	}
 }
 
-func (ncs *NinjaCayleyStore) CleanupDatabase() error {
-	if err := ncs.Close(); err != nil {
-		return err
-	}
-
-	return os.RemoveAll(filepath.Dir(ncs.dbPath))
-}
-
 // inferFileType infers file type from extension
-func (ncs *NinjaCayleyStore) inferFileType(path string) string {
+func (ncs *NinjaStore) inferFileType(path string) string {
 	ext := strings.ToLower(path[strings.LastIndex(path, ".")+1:])
 	switch ext {
 	case "cpp", "cc", "cxx", "c":
@@ -863,17 +864,17 @@ func (ncs *NinjaCayleyStore) inferFileType(path string) string {
 
 // Example usage
 func main() {
-	// Create Ninja Cayley store
+	// Create Ninja store
 	dbPath := "./ninja_db/cayley.db"
-	ncs, err := NewNinjaCayleyStore(dbPath)
+	ncs, err := NewNinjaStore(dbPath)
 	if err != nil {
-		fmt.Println("Failed to create Ninja Cayley store:", err.Error())
+		fmt.Println("Failed to create Ninja store:", err.Error())
 		os.Exit(1)
 	}
 
 	fmt.Printf("Database created at: %s\n", dbPath)
 
-	defer func(ncs *NinjaCayleyStore) {
+	defer func(ncs *NinjaStore) {
 		_ = ncs.CleanupDatabase()
 	}(ncs)
 

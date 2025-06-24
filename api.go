@@ -15,7 +15,7 @@ import (
 
 // APIServer wraps the NinjaCayleyStore with REST endpoints
 type APIServer struct {
-	store *NinjaCayleyStore
+	store *NinjaStore
 	port  string
 }
 
@@ -44,7 +44,7 @@ type UpdateRuleRequest struct {
 
 // NewAPIServer creates a new API server
 func NewAPIServer(dbPath string, port string) (*APIServer, error) {
-	store, err := NewNinjaCayleyStore(dbPath)
+	store, err := NewNinjaStore(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create store: %w", err)
 	}
