@@ -179,10 +179,7 @@ func (ncs *NinjaStore) Close() error {
 }
 
 func (ncs *NinjaStore) CleanupDatabase() error {
-	if err := ncs.Close(); err != nil {
-		return err
-	}
-
+	_ = ncs.Close()
 	return os.RemoveAll(filepath.Dir(ncs.dbPath))
 }
 
